@@ -42,7 +42,8 @@ jarvis/
 ├── rollback/           Restricted file checkpoints and restoration
 ├── system/             Read-only host monitoring
 ├── network/            Explicit network authorization policy
-└── plugins/            Explicit plugin discovery and registration
+├── plugins/            Explicit plugin discovery and registration
+└── agent/local_provider.py  Local HTTP/process model provider boundary
 ```
 
 ## Built-in commands
@@ -74,8 +75,42 @@ JARVIS separates intelligence from execution:
 
 The `NetworkManager` and `PluginManager` are policy boundaries: external
 networking is disabled by default and plugins are never imported merely because
-they exist on disk. A future Raspberry Pi local-model adapter can implement
-`AIProvider` and be injected into `Assistant` without changing the core loop.
+they exist on disk.
+
+## Local model provider
+
+`LocalAIProvider` is ready for a real model runtime without changing JARVIS
+Core. It accepts either:
+
+- A loopback HTTP endpoint such as
+  `http://127.0.0.1:11434/api/generate`
+- A local executable process invoked without a shell
+
+The runtime must return structured JSON for plans, code changes, and improvement
+proposals. JARVIS does not turn ordinary prose into a successful result.
+
+Enable the endpoint adapter:
+
+```bash
+export JARVIS_LOCAL_PROVIDER_ENABLED=true
+export JARVIS_LOCAL_PROVIDER_MODE=endpoint
+export JARVIS_LOCAL_ENDPOINT=http://127.0.0.1:11434/api/generate
+export JARVIS_LOCAL_MODEL_NAME=your-local-model
+export JARVIS_LOCAL_PROVIDER_TIMEOUT=30
+python -m jarvis --goal "organize my notes"
+```
+
+Or configure a local process adapter:
+
+```bash
+export JARVIS_LOCAL_PROVIDER_ENABLED=true
+export JARVIS_LOCAL_PROVIDER_MODE=process
+export JARVIS_LOCAL_PROCESS_COMMAND="python -m my_local_runtime"
+export JARVIS_LOCAL_MODEL_NAME=your-local-model
+```
+
+The process adapter uses `shell=False`, and endpoint mode accepts only
+`localhost`, `127.0.0.1`, or `::1`.
 
 ## Configuration
 
@@ -88,3 +123,9 @@ All settings have local defaults. Optional environment variables:
 - `JARVIS_MAX_MEMORY_ITEMS`
 - `JARVIS_SANDBOX_TIMEOUT`
 - `JARVIS_AUTONOMOUS_MAX_RETRIES`
+- `JARVIS_LOCAL_PROVIDER_ENABLED`
+- `JARVIS_LOCAL_PROVIDER_MODE` (`endpoint` or `process`)
+- `JARVIS_LOCAL_ENDPOINT`
+- `JARVIS_LOCAL_PROCESS_COMMAND`
+- `JARVIS_LOCAL_MODEL_NAME`
+- `JARVIS_LOCAL_PROVIDER_TIMEOUT`

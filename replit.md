@@ -26,6 +26,7 @@ injected AI-provider boundary for future Raspberry Pi LLM support.
 - `jarvis/main.py` — CLI entry point and one-shot goal mode.
 - `jarvis/core/` — assistant orchestration.
 - `jarvis/agent/` — Brain, Planner, Agent Executor, Code Agent, and self-improvement.
+- `jarvis/agent/local_provider.py` — local loopback HTTP/process AI provider adapter.
 - `jarvis/memory/` — local JSON memory manager.
 - `jarvis/tools/` — tool protocol, registry, execution, and verification.
 - `jarvis/sandbox/` — restricted workspace paths and bounded Python compilation.
@@ -42,6 +43,7 @@ injected AI-provider boundary for future Raspberry Pi LLM support.
 - Plans are structured data, not free-form text. Tools return structured results and must verify each step.
 - Code changes are allow-listed `.py` files, parsed before write, compile-tested in the sandbox, and checkpointed for rollback.
 - Self-improvement produces proposals and requires explicit approval before applying changes.
+- `LocalAIProvider` owns runtime-specific transport and JSON envelopes; Core only sees the existing `AIProvider` contract.
 
 ## Product
 
@@ -57,6 +59,7 @@ system observation, explicit network policy, and controlled plugin loading.
 
 - `python -m unittest discover -s tests -v` is the test command.
 - `goal <objective>` requires a real injected `Brain`; the default `UnavailableBrain` must not fabricate AI output.
+- Local provider endpoint mode must remain loopback-only; process mode must remain shell-free.
 
 ## Pointers
 

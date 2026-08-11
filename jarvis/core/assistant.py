@@ -9,7 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from ..agent import AgentExecutor, BrainUnavailableError, Planner, UnavailableBrain
+from ..agent import (
+    AgentExecutor,
+    Brain,
+    BrainUnavailableError,
+    Planner,
+    UnavailableBrain,
+    build_local_brain,
+)
 from ..agent.models import ExecutionReport
 from ..config import Settings
 from ..memory import MemoryManager
@@ -25,7 +32,7 @@ class Assistant:
     """Coordinate JARVIS capabilities without coupling them together."""
 
     settings: Settings
-    brain: object = field(default_factory=UnavailableBrain)
+    brain: Brain = field(default_factory=UnavailableBrain)
     memory: MemoryManager = field(init=False)
     sandbox: Sandbox = field(init=False)
     recovery: RecoveryManager = field(init=False)
@@ -36,6 +43,8 @@ class Assistant:
     monitor: SystemMonitor = field(init=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.brain, UnavailableBrain) and self.settings.local_provider_enabled:
+            self.brain = build_local_brain(self.settings)
         self.memory = MemoryManager(
             self.settings.memory_file,
             max_items=self.settings.max_memory_items,
