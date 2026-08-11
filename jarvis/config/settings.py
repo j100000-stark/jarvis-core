@@ -25,6 +25,12 @@ class Settings:
     local_model_name: str = "local"
     local_provider_timeout_seconds: float = 30.0
     demo_mode: bool = False
+    # Remote LLM provider (JARVIS_LLM_ENABLED=true activates this brain)
+    # JARVIS_LLM_API_KEY is consumed directly from the environment by
+    # jarvis.agent.remote_llm — it is intentionally not stored here.
+    llm_enabled: bool = False
+    llm_provider: str = "openai"   # "openai" | "anthropic" | "groq" | "openrouter" | base-URL
+    llm_model: str = "gpt-4o-mini"
 
     @classmethod
     def from_environment(cls, memory_file: str | None = None) -> "Settings":
@@ -59,6 +65,9 @@ class Settings:
                 os.environ.get("JARVIS_LOCAL_PROVIDER_TIMEOUT"), 30.0
             ),
             demo_mode=_boolean(os.environ.get("JARVIS_DEMO_MODE"), False),
+            llm_enabled=_boolean(os.environ.get("JARVIS_LLM_ENABLED"), False),
+            llm_provider=os.environ.get("JARVIS_LLM_PROVIDER", "openai"),
+            llm_model=os.environ.get("JARVIS_LLM_MODEL", "gpt-4o-mini"),
         )
 
 

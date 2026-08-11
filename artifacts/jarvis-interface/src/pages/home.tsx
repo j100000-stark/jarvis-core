@@ -45,38 +45,61 @@ const STATE_META: Record<CoreState, { label: string; color: string; dim: string 
   alert:     { label: 'Alert',      color: '#ff7700', dim: 'rgba(255,100,0,0.15)' },
 };
 
+// ---- Provider type derived from providerName ----
+
+type ProviderType = 'demo' | 'real-llm' | 'local-llm' | 'none';
+
+function deriveProviderType(providerName: string | undefined): ProviderType {
+  if (!providerName || providerName === 'unconfigured') return 'none';
+  if (providerName === 'demo') return 'demo';
+  if (providerName.startsWith('llm:')) return 'real-llm';
+  if (providerName.startsWith('local:')) return 'local-llm';
+  return 'none';
+}
+
+function deriveModelLabel(providerName: string | undefined): string | null {
+  if (!providerName) return null;
+  if (providerName.startsWith('llm:')) {
+    const parts = providerName.split(':');
+    return parts.slice(2).join(':') || null;  // e.g. "gpt-4o-mini"
+  }
+  if (providerName.startsWith('local:')) return providerName.slice('local:'.length) || null;
+  return null;
+}
+
 // ---- Status text derivation ----
 
 function deriveStatus(
   connected: boolean | undefined,
-  providerConfigured: boolean | undefined,
+  providerType: ProviderType,
   providerName: string | undefined,
-  demoMode: boolean,
   pending: boolean,
-  hasResponse: boolean,
   isLoading: boolean,
 ): { line1: string; line2: string | null } {
-  if (isLoading)            return { line1: 'Connecting to runtime…', line2: null };
-  if (!connected)           return { line1: 'Runtime unreachable',    line2: 'Start the local JARVIS process' };
-  if (demoMode)             return { line1: 'DEMO MODE',              line2: 'Scripted responses — no real AI connected' };
-  if (!providerConfigured)  return { line1: 'No provider configured', line2: 'Connect a local model to activate' };
-  if (pending)              return { line1: 'Processing goal…',       line2: providerName ?? null };
-  if (hasResponse)          return { line1: 'Ready',                  line2: providerName ?? null };
-  return                           { line1: 'Ready',                  line2: providerName ?? null };
+  const modelLabel = deriveModelLabel(providerName);
+  if (isLoading)                 return { line1: 'Connecting to runtime…',  line2: null };
+  if (!connected)                return { line1: 'Runtime unreachable',      line2: 'Start the local JARVIS process' };
+  if (providerType === 'none')   return { line1: 'No provider configured',   line2: 'Connect a local model or enable LLM mode' };
+  if (providerType === 'demo')   return { line1: 'DEMO MODE',                line2: 'Scripted responses — no real AI' };
+  if (providerType === 'real-llm' && pending) return { line1: 'Thinking…', line2: modelLabel };
+  if (providerType === 'real-llm') return { line1: 'REAL LLM', line2: modelLabel };
+  if (providerType === 'local-llm' && pending) return { line1: 'Processing…', line2: modelLabel };
+  if (providerType === 'local-llm') return { line1: 'LOCAL LLM', line2: modelLabel };
+  if (pending)                   return { line1: 'Processing goal…',        line2: providerName ?? null };
+  return                                { line1: 'Ready',                    line2: providerName ?? null };
 }
 
 function deriveCoreState(
   connected: boolean | undefined,
-  providerConfigured: boolean | undefined,
+  providerType: ProviderType,
   pending: boolean,
   speakingFor: boolean,
-  demoMode: boolean,
   isLoading: boolean,
 ): CoreState {
-  if (isLoading || !connected)           return 'offline';
-  if (!providerConfigured && !demoMode)  return 'idle';  // runtime alive, no brain
-  if (pending)                           return 'thinking';
-  if (speakingFor)                       return 'speaking';
+  if (isLoading || !connected)       return 'offline';
+  if (providerType === 'none')       return 'idle';
+  if (pending)                       return 'thinking';
+  if (speakingFor)                   return 'speaking';
   return 'idle';
 }
 
@@ -110,11 +133,12 @@ export default function Home() {
   });
   const sendMessage = useSendJarvisMessage();
   const runtime = status.data;
+  const providerType = deriveProviderType(runtime?.providerName);
 
-  // Detect demo mode from the provider name returned by the backend
+  // Sync demoMode state from providerType
   useEffect(() => {
-    setDemoMode(runtime?.providerName?.toLowerCase() === 'demo');
-  }, [runtime?.providerName]);
+    setDemoMode(providerType === 'demo');
+  }, [providerType]);
 
   const sendError = useMemo(() => {
     if (!sendMessage.error) return null;
@@ -124,24 +148,21 @@ export default function Home() {
 
   const coreState = deriveCoreState(
     runtime?.connected,
-    runtime?.providerConfigured,
+    providerType,
     sendMessage.isPending,
     speakingFor,
-    demoMode,
     status.isLoading && !runtime,
   );
 
   const statusText = deriveStatus(
     runtime?.connected,
-    runtime?.providerConfigured,
+    providerType,
     runtime?.providerName ?? undefined,
-    demoMode,
     sendMessage.isPending,
-    messages.some((m) => m.role === 'assistant'),
     status.isLoading && !runtime,
   );
 
-  const ready = Boolean(runtime?.connected && (runtime?.providerConfigured || demoMode));
+  const ready = Boolean(runtime?.connected && providerType !== 'none');
 
   const handleSend = () => {
     const trimmed = goal.trim();

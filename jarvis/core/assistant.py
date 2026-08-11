@@ -19,6 +19,7 @@ from ..agent import (
     build_local_brain,
 )
 from ..agent.demo import DEMO_LABEL, DemoBrain
+from ..agent.remote_llm import RemoteLLMConfigError, build_remote_llm_brain
 from ..agent.models import ExecutionReport
 from ..config import Settings
 from ..memory import MemoryManager
@@ -62,8 +63,13 @@ class Assistant:
         # --- Brain selection ---
         if isinstance(self.brain, UnavailableBrain):
             if self.settings.demo_mode:
+                # DemoBrain: explicit scripted responses, no real AI
                 self.brain = DemoBrain()
+            elif self.settings.llm_enabled:
+                # RemoteLLMBrain: real LLM via API key — fails loudly if key missing
+                self.brain = build_remote_llm_brain(self.settings)
             elif self.settings.local_provider_enabled:
+                # LocalAIProvider: on-device model (Ollama / llama.cpp)
                 self.brain = build_local_brain(self.settings)
 
         # --- Core subsystems ---
@@ -110,9 +116,17 @@ class Assistant:
 
     def startup_message(self) -> str:
         """Return a concise session greeting."""
-        demo = f" [{DEMO_LABEL}]" if self.settings.demo_mode else ""
+        pname = getattr(self.brain, "provider_name", "unknown")
+        if self.settings.demo_mode:
+            suffix = f" [{DEMO_LABEL}]"
+        elif pname.startswith("llm:"):
+            suffix = f" [REAL LLM — {pname}]"
+        elif pname.startswith("local:"):
+            suffix = f" [LOCAL LLM — {pname}]"
+        else:
+            suffix = ""
         return (
-            f"{self.settings.name} v{self.settings.version} online{demo}. "
+            f"{self.settings.name} v{self.settings.version} online{suffix}. "
             "Type 'help' for commands or 'exit' to leave."
         )
 
@@ -263,6 +277,15 @@ class Assistant:
     def status_text(self) -> str:
         """Describe the current local runtime state."""
         now = datetime.now(UTC).isoformat(timespec="seconds")
+        pname = getattr(self.brain, "provider_name", "unknown")
+        if pname.startswith("llm:"):
+            provider_type = "real-llm"
+        elif pname.startswith("local:"):
+            provider_type = "local-llm"
+        elif pname == "demo":
+            provider_type = "demo"
+        else:
+            provider_type = "none"
         return "\n".join(
             [
                 f"{self.settings.name} v{self.settings.version}",
@@ -270,10 +293,12 @@ class Assistant:
                 f"Memories: {self.memory.count()}",
                 f"Tools: {', '.join(self.tools.names())}",
                 f"Recovery incidents: {self.recovery.count()}",
-                f"Brain provider: {getattr(self.brain, 'provider_name', 'unknown')}",
+                f"Brain provider: {pname}",
+                f"Provider type: {provider_type}",
                 f"Disk healthy: {self.monitor.healthy()}",
                 "External APIs: disabled",
                 f"Demo mode: {'yes' if self.settings.demo_mode else 'no'}",
+                f"LLM mode: {'yes' if self.settings.llm_enabled else 'no'}",
             ]
         )
 

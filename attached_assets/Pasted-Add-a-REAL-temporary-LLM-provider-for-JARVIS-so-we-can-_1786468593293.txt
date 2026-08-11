@@ -1,0 +1,75 @@
+Add a REAL temporary LLM provider for JARVIS so we can perform an end-to-end intelligence demo.
+
+IMPORTANT:
+- Do NOT remove DemoBrain.
+- Do NOT modify or weaken the existing safety architecture.
+- Do NOT fake or simulate LLM responses.
+- Keep Brain/AIProvider and LocalAIProvider interfaces intact.
+- The temporary provider must be replaceable later by a local Ollama/llama.cpp model.
+- Never hardcode API keys or secrets.
+
+Implementation:
+
+1. Create a TemporaryLLMProvider implementing the existing Brain/AIProvider contract.
+2. Use an environment-configured LLM provider/API.
+3. Read the provider API key and model name only from environment variables/secrets.
+4. If the credentials are missing, fail clearly with "LLM provider not configured" rather than falling back to DemoBrain.
+5. Keep DemoBrain available separately through JARVIS_DEMO_MODE.
+6. Add configuration such as:
+   JARVIS_LLM_ENABLED=true
+   JARVIS_LLM_PROVIDER=<provider>
+   JARVIS_LLM_MODEL=<model>
+   JARVIS_LLM_API_KEY=<secret>
+7. Connect the real LLM to the existing pipeline:
+
+USER MESSAGE
+→ REAL LLM
+→ structured goal/plan
+→ existing Planner
+→ AgentOrchestrator
+→ existing safe tools
+→ verification
+→ MemoryManager when appropriate
+→ final response
+
+8. The LLM must NOT receive unrestricted system access.
+9. Tool calls must go through the existing tool registry and safety boundaries.
+10. Do not allow the LLM to directly execute arbitrary shell commands.
+11. Add conversation context so multiple messages can be understood together.
+12. Make the provider name and model visible in the JARVIS system status.
+13. Add tests using a mock LLM transport. Tests must not require a real API key.
+14. Keep DEMO MODE completely separate from REAL LLM MODE.
+15. Update the web interface so the status can distinguish:
+
+DEMO
+REAL LLM
+LOCAL LLM
+NO PROVIDER
+
+16. When REAL LLM mode is active, remove the misleading "No provider configured" state.
+17. Keep the current cinematic neural-core UI unchanged.
+
+Test with natural-language requests such as:
+
+"Hi JARVIS, my name is San. Remember that."
+
+"What is my name?"
+
+"Check the system and tell me if everything is okay."
+
+"Explain what you can currently control."
+
+"Create a plan to check the network."
+
+The assistant must actually interpret these requests using the configured LLM rather than keyword matching.
+
+Run the complete Python test suite and TypeScript checks.
+
+Finally report:
+- which LLM provider was implemented
+- which model is configured
+- required environment variables/secrets
+- how to enable REAL LLM mode
+- how to disable it
+- test results
+- confirmation that DemoBrain remains untouched

@@ -1,12 +1,17 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
+export type ProviderType = "demo" | "real-llm" | "local-llm" | "none";
+
 export type JarvisRuntimeStatus = {
   connected: boolean;
   providerConfigured: boolean;
   providerName: string;
+  providerType: ProviderType;
   version: string;
   externalApisEnabled: boolean;
+  llmEnabled: boolean;
+  llmModel: string | null;
   error: string | null;
 };
 
@@ -114,16 +119,32 @@ function parseStatus(output: string): JarvisRuntimeStatus {
   };
 
   const providerName = lineValue("Brain provider:", "unknown");
+  const providerTypeRaw = lineValue("Provider type:", "none") as ProviderType;
   const version = lineValue("JARVIS ", "unknown");
   const externalApisEnabled =
     lineValue("External APIs:", "disabled").toLowerCase() === "enabled";
+  const llmModeEnabled =
+    lineValue("LLM mode:", "no").toLowerCase() === "yes";
+
+  // Derive a clean model label for display
+  let llmModel: string | null = null;
+  if (providerName.startsWith("llm:")) {
+    // format: "llm:<provider>:<model>"
+    const parts = providerName.split(":");
+    llmModel = parts.slice(2).join(":") || null;
+  } else if (providerName.startsWith("local:")) {
+    llmModel = providerName.slice("local:".length) || null;
+  }
 
   return {
     connected: true,
     providerConfigured: providerName !== "unconfigured" && providerName !== "unknown",
     providerName,
+    providerType: providerTypeRaw,
     version,
     externalApisEnabled,
+    llmEnabled: llmModeEnabled,
+    llmModel,
     error: null,
   };
 }
@@ -135,8 +156,11 @@ export function getJarvisStatus(): JarvisRuntimeStatus {
       connected: false,
       providerConfigured: false,
       providerName: "unavailable",
+      providerType: "none" as const,
       version: "unknown",
       externalApisEnabled: false,
+      llmEnabled: false,
+      llmModel: null,
       error: result.error ?? "JARVIS runtime is unavailable.",
     };
   }
