@@ -1,6 +1,7 @@
-# [Project name]
+# JARVIS
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+JARVIS is a local-first, modular autonomous assistant foundation with an
+injected AI-provider boundary for future Raspberry Pi LLM support.
 
 ## Run & Operate
 
@@ -22,23 +23,40 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `jarvis/main.py` — CLI entry point and one-shot goal mode.
+- `jarvis/core/` — assistant orchestration.
+- `jarvis/agent/` — Brain, Planner, Agent Executor, Code Agent, and self-improvement.
+- `jarvis/memory/` — local JSON memory manager.
+- `jarvis/tools/` — tool protocol, registry, execution, and verification.
+- `jarvis/sandbox/` — restricted workspace paths and bounded Python compilation.
+- `jarvis/rollback/` — file checkpoints and restoration.
+- `jarvis/system/` — read-only system monitoring.
+- `jarvis/network/` — explicit network authorization policy.
+- `jarvis/plugins/` — explicit plugin discovery and factory registration.
+- `tests/` — standard-library `unittest` coverage for the architecture.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- No AI provider is bundled: autonomous planning and code generation fail explicitly until a real provider is injected.
+- `AIProvider` is the adapter contract for a future local Raspberry Pi model; the core never depends on an external API.
+- Plans are structured data, not free-form text. Tools return structured results and must verify each step.
+- Code changes are allow-listed `.py` files, parsed before write, compile-tested in the sandbox, and checkpointed for rollback.
+- Self-improvement produces proposals and requires explicit approval before applying changes.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+JARVIS supports local memory, registered tools, structured autonomous goals,
+bounded execution and retries, failure recovery, restricted Python code changes,
+system observation, explicit network policy, and controlled plugin loading.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Keep the project standard-library-only until an external provider or dependency is explicitly requested.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- `python -m unittest discover -s tests -v` is the test command.
+- `goal <objective>` requires a real injected `Brain`; the default `UnavailableBrain` must not fabricate AI output.
 
 ## Pointers
 

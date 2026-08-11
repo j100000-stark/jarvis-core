@@ -8,6 +8,7 @@ from typing import Protocol
 from ..config import Settings
 from ..memory import MemoryStore
 from ..sandbox import Sandbox
+from ..agent.models import PlanStep, ToolResult
 
 
 @dataclass(slots=True)
@@ -25,7 +26,10 @@ class Tool(Protocol):
     name: str
     description: str
 
-    def run(self, argument: str, context: ToolContext) -> str:
+    def run(self, argument: str, context: ToolContext) -> ToolResult | str:
+        ...
+
+    def verify(self, result: ToolResult, step: PlanStep) -> bool:
         ...
 
 
@@ -43,6 +47,22 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name.casefold())
 
+    def execute(self, name: str, argument: str, context: ToolContext) -> ToolResult:
+        tool = self.get(name)
+        if tool is None:
+            return ToolResult(ok=False, error=f"Unknown tool: {name}")
+        raw_result = tool.run(argument, context)
+        if isinstance(raw_result, ToolResult):
+            return raw_result
+        return ToolResult(ok=True, output=str(raw_result))
+
+    def verify(self, name: str, result: ToolResult, step: PlanStep) -> bool:
+        tool = self.get(name)
+        if tool is None or not result.ok:
+            return False
+        verifier = getattr(tool, "verify", None)
+        return bool(verifier(result, step)) if verifier else True
+
     def names(self) -> list[str]:
         return sorted(self._tools)
 
@@ -56,6 +76,7 @@ class ToolRegistry:
                 "  remember   Save a local memory: remember <fact>",
                 "  recall     Search local memories: recall [query]",
                 "  status     Show runtime and module status",
+                "  goal       Plan and execute a goal: goal <objective>",
                 "  help       Show this list",
             ]
         )

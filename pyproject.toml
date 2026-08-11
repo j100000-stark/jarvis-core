@@ -11,3 +11,6 @@ dependencies = []
 
 [project.scripts]
 jarvis = "jarvis.main:main"
+
+[tool.jarvis]
+test-command = "python -m unittest discover -s tests -v"

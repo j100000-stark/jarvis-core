@@ -37,7 +37,12 @@ jarvis/
 ├── tools/              Tool protocol, registry, and safe built-ins
 ├── config/             Environment-backed runtime settings
 ├── sandbox/            Workspace path and timeout boundaries
-└── recovery/           Recoverable error recording
+├── recovery/           Recoverable error recording
+├── agent/              Brain, planner, executor, code agent, and improvement flow
+├── rollback/           Restricted file checkpoints and restoration
+├── system/             Read-only host monitoring
+├── network/            Explicit network authorization policy
+└── plugins/            Explicit plugin discovery and registration
 ```
 
 ## Built-in commands
@@ -48,7 +53,29 @@ jarvis/
 - `remember <fact>` — persist a local memory in `data/memory.json`
 - `recall [query]` — search local memories
 - `status` — show runtime state
+- `goal <goal>` — plan and execute a high-level goal through a configured Brain
 - `exit` — close the session
+
+## Autonomous architecture
+
+JARVIS separates intelligence from execution:
+
+1. A configured `Brain`/`AIProvider` turns a high-level goal into structured
+   plan steps. No provider is bundled, so the default refuses to invent a plan.
+2. `Planner` validates the plan against shared models.
+3. `AgentExecutor` selects only registered tools, executes bounded retries, and
+   requires verification for every step.
+4. `MemoryManager`, `RecoveryManager`, and `SystemMonitor` provide context,
+   incident tracking, and read-only health information.
+5. `CodeAgent` accepts only complete `.py` files in an allow-list, parses and
+   compiles them in the sandbox, and restores a pre-change checkpoint on failure.
+6. `SelfImprovementManager` creates proposals but requires explicit approval
+   before applying code changes.
+
+The `NetworkManager` and `PluginManager` are policy boundaries: external
+networking is disabled by default and plugins are never imported merely because
+they exist on disk. A future Raspberry Pi local-model adapter can implement
+`AIProvider` and be injected into `Assistant` without changing the core loop.
 
 ## Configuration
 
@@ -60,3 +87,4 @@ All settings have local defaults. Optional environment variables:
 - `JARVIS_MEMORY_FILE`
 - `JARVIS_MAX_MEMORY_ITEMS`
 - `JARVIS_SANDBOX_TIMEOUT`
+- `JARVIS_AUTONOMOUS_MAX_RETRIES`

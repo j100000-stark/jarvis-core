@@ -49,3 +49,18 @@ class Sandbox:
                 return SandboxResult(ok=False, error="Operation exceeded sandbox timeout.")
             except Exception as error:
                 return SandboxResult(ok=False, error=str(error))
+
+    def test_python_files(self, paths: list[str]) -> SandboxResult:
+        """Compile Python files without executing generated code."""
+        import ast
+
+        def compile_files() -> list[str]:
+            compiled: list[str] = []
+            for path in paths:
+                resolved = self.resolve_path(path)
+                source = resolved.read_text(encoding="utf-8")
+                compile(ast.parse(source, filename=str(resolved)), str(resolved), "exec")
+                compiled.append(path)
+            return compiled
+
+        return self.run(compile_files)

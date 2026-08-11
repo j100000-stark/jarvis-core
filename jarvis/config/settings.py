@@ -22,6 +22,7 @@ class Settings:
     memory_file: Path = Path("data/memory.json")
     max_memory_items: int = 100
     sandbox_timeout_seconds: float = 2.0
+    autonomous_max_retries: int = 1
 
     @classmethod
     def from_environment(cls, memory_file: str | None = None) -> "Settings":
@@ -39,6 +40,9 @@ class Settings:
             ),
             sandbox_timeout_seconds=_positive_float(
                 os.getenv("JARVIS_SANDBOX_TIMEOUT"), default=2.0
+            ),
+            autonomous_max_retries=_positive_int(
+                os.getenv("JARVIS_AUTONOMOUS_MAX_RETRIES"), default=1
             ),
         )
 

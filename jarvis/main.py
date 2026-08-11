@@ -24,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MESSAGE",
         help="Process one message and exit instead of opening an interactive session.",
     )
+    parser.add_argument(
+        "--goal",
+        metavar="GOAL",
+        help="Plan and execute one high-level goal using the configured Brain.",
+    )
     return parser
 
 
@@ -32,6 +37,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     settings = Settings.from_environment(memory_file=args.memory_file)
     assistant = Assistant(settings)
+
+    if args.goal is not None:
+        print(assistant.respond(f"goal {args.goal}"))
+        return
 
     if args.once is not None:
         print(assistant.respond(args.once))
