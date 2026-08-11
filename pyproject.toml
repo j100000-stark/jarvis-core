@@ -1,0 +1,13 @@
+[build-system]
+requires = []
+build-backend = "setuptools.build_meta:__legacy__"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "A modular, local-first autonomous AI assistant foundation."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+jarvis = "jarvis.main:main"
