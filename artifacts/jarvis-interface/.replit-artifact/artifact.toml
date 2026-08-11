@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "JARVIS Interface"
+description = "A mobile-friendly web interface for the local-first JARVIS autonomous assistant. It shows live runtime and provider status, sends high-level goals to the existing JARVIS backend, and clearly surfaces unavailable Brain state without fabricating assistant responses."
+version = "1.0.0"
+id = "artifacts/jarvis-interface"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24111
+
+[services.development]
+run = "pnpm --filter @workspace/jarvis-interface run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/jarvis-interface", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/jarvis-interface/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24111"
+BASE_PATH = "/"

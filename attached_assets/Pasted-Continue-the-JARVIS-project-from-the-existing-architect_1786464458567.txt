@@ -1,0 +1,271 @@
+Continue the JARVIS project from the existing architecture. Do NOT rewrite or remove the current Brain/AIProvider, LocalAIProvider, Planner, AgentExecutor, MemoryManager, CodeAgent, Sandbox, RollbackManager, SelfImprovementManager, SystemMonitor, NetworkManager, PluginManager, or mobile web interface.
+
+We are now building the next major layer: JARVIS RESILIENCE + SECURITY AGENT ARCHITECTURE.
+
+IMPORTANT:
+- Keep the architecture honest. Do not simulate a real AI or claim that an LLM is connected when it is not.
+- Keep the real LocalAIProvider unchanged and ready for a future local LLM.
+- Do not use external AI APIs.
+- Do not implement offensive hacking, credential theft, malware, persistence, unauthorized access, exploitation of third-party systems, or attacks against external networks.
+- Security capabilities must operate only on explicitly authorized/local systems and use safe, defensive actions.
+- All autonomous actions must respect explicit permission/safety gates.
+- Keep everything modular and testable.
+- Use Python standard library only unless an existing project dependency is absolutely required.
+
+1. RESILIENCE LAYER
+
+Create a new resilience subsystem that makes JARVIS self-healing.
+
+It must include:
+
+- WatchdogManager
+- CrashRecoveryManager
+- ServiceSupervisor
+- HealthCheckManager
+- StateRecoveryManager
+- RecoveryIncident records
+
+Requirements:
+
+- Detect when a JARVIS service/process stops unexpectedly.
+- Restart failed internal services through a controlled supervisor.
+- Use bounded restart attempts and exponential backoff.
+- Persist service state before risky operations.
+- Detect repeated crash loops.
+- Stop retrying indefinitely if a service repeatedly fails.
+- Preserve logs and recovery incidents.
+- Support checkpoints and rollback where appropriate.
+- Never allow JARVIS to recursively spawn unlimited processes.
+- Expose health/recovery status to the existing web interface.
+- Provide deterministic tests using mocks; tests must not intentionally crash the real environment.
+
+2. NETWORK RESILIENCE
+
+Extend the existing NetworkManager into a NetworkRecoveryManager.
+
+It must support the following states:
+
+ONLINE
+DEGRADED
+OFFLINE
+LOCAL_ONLY
+RECOVERING
+
+Implement:
+
+- connectivity health checks
+- DNS/connectivity diagnostics
+- bounded reconnection attempts
+- exponential backoff
+- detection of network changes
+- preservation of local operation when Internet disappears
+- transition into offline/local-only mode
+- recovery when connectivity returns
+- event logging
+
+Design an interface for future network transports without implementing proprietary satellite services now.
+
+Create a LocalAccessPoint/LocalNetworkFallback interface for future Raspberry hardware.
+
+IMPORTANT:
+A local access point must only provide local connectivity between authorized devices. Do not pretend it creates Internet access.
+
+3. SECURITY AGENT ARCHITECTURE
+
+Create a modular defensive security subsystem:
+
+SecurityCommander
+SecuritySentinel
+SecurityInvestigator
+SecurityDefender
+SecurityTestAgent
+
+SecurityCommander:
+- coordinates security agents
+- receives high-level defensive goals
+- selects appropriate agents
+- produces structured reports
+
+SecuritySentinel:
+- monitors authorized local system events
+- monitors process/service state
+- monitors local network configuration and connection state
+- detects suspicious/anomalous events
+- creates security alerts
+
+SecurityInvestigator:
+- analyzes collected local logs/events
+- correlates events
+- produces a timeline
+- assigns a risk level
+- clearly distinguishes evidence from assumptions
+
+SecurityDefender:
+- supports safe defensive actions on authorized systems
+- examples: stop an explicitly identified suspicious local process, disable a local service, isolate a local interface through an approved safety action, or preserve evidence
+- every action must pass an explicit policy/safety gate
+- destructive actions must require explicit approval
+
+SecurityTestAgent:
+- performs defensive security checks only against a configured local/authorized test target
+- validates configuration, exposed local services, permissions, and basic security posture
+- produces findings and remediation suggestions
+- do not implement exploitation, credential attacks, malware, persistence, evasion, or unauthorized scanning
+
+4. MULTI-AGENT ORCHESTRATION
+
+Extend the existing AgentExecutor so agents can collaborate.
+
+Flow:
+
+USER GOAL
+→ JARVIS COMMANDER
+→ PLAN
+→ SELECT AGENTS
+→ EXECUTE SAFE STEPS
+→ VERIFY
+→ REPORT
+→ RECOVERY IF NEEDED
+
+The user should not need to manually choose the agent.
+
+Example goal:
+
+"Check whether my computer is behaving normally."
+
+JARVIS should be architecturally capable of:
+
+Sentinel → collect local status
+Investigator → analyze
+SecurityTestAgent → perform safe checks
+Commander → produce report
+
+Do not fabricate results if no real system data is available.
+
+5. SELF-IMPROVEMENT SAFETY
+
+Extend SelfImprovementManager.
+
+It may:
+- propose improvements
+- generate code changes
+- create checkpoints
+- test changes in Sandbox
+- compile/test modified Python files
+- request approval before installing self-modifications
+
+It must NOT silently grant itself new permissions.
+
+New capabilities requiring additional privileges must generate an explicit capability request.
+
+6. MOBILE WEB INTERFACE
+
+Extend the existing JARVIS mobile interface.
+
+Add:
+
+- System health
+- Network status
+- Recovery status
+- Security status
+- Recent incidents
+- Agent activity
+- DEMO MODE indicator
+- provider status
+
+Do not fabricate live data.
+
+If no real provider is configured, clearly show:
+"AI provider not configured."
+
+7. DEMO MODE
+
+Keep a deterministic DemoBrain/DemoProvider.
+
+Demo mode must demonstrate:
+
+goal
+→ planning
+→ agent selection
+→ safe tool execution
+→ verification
+→ report
+
+It must clearly display:
+"DEMO MODE — NO REAL AI CONNECTED"
+
+Do not make DemoBrain look like a real LLM.
+
+8. DATA MODELS
+
+Add structured models for:
+
+HealthStatus
+NetworkState
+RecoveryIncident
+SecurityAlert
+SecurityFinding
+SecurityEvent
+AgentTask
+AgentReport
+CapabilityRequest
+
+9. TESTING
+
+Add comprehensive standard-library unittest coverage for:
+
+- watchdog behavior
+- bounded restart logic
+- crash-loop detection
+- recovery
+- network state transitions
+- offline mode
+- network recovery
+- security event creation
+- security alert severity
+- investigation reports
+- defender safety gates
+- security test authorization
+- multi-agent orchestration
+- capability approval
+- demo mode
+- mobile API responses
+
+Run the complete test suite:
+
+python -m unittest discover -s tests -v
+
+Do not finish until all tests pass.
+
+10. DOCUMENTATION
+
+Update README/project documentation with the new architecture.
+
+Clearly distinguish:
+
+REAL:
+- existing runtime
+- actual local system monitoring where implemented
+- real LocalAIProvider interface
+
+DEMO:
+- DemoBrain
+- deterministic demo plans/results
+
+FUTURE:
+- Raspberry hardware
+- local LLM runtime
+- voice
+- camera/vision
+- local Wi-Fi access point
+- cellular connectivity
+- satellite connectivity
+- sensors/actuators
+
+Finally, provide a concise implementation report listing:
+- files created
+- files modified
+- architecture added
+- tests executed
+- test result
+- anything intentionally left for future hardware.

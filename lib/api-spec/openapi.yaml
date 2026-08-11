@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: jarvis
+    description: JARVIS runtime operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,78 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /jarvis/status:
+    get:
+      operationId: getJarvisStatus
+      tags: [jarvis]
+      summary: Get JARVIS runtime status
+      description: Returns the live local JARVIS runtime and Brain provider state.
+      responses:
+        "200":
+          description: Runtime status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisStatus"
+        "503":
+          description: Runtime unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisError"
+  /jarvis/messages:
+    post:
+      operationId: sendJarvisMessage
+      tags: [jarvis]
+      summary: Send a high-level goal to JARVIS
+      description: Sends a goal to the existing JARVIS autonomous runtime.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JarvisMessageInput"
+      responses:
+        "200":
+          description: JARVIS runtime response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisMessageResponse"
+        "400":
+          description: Invalid message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisError"
+        "503":
+          description: Brain/provider unavailable or runtime unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisError"
+  /jarvis/system:
+    get:
+      operationId: getJarvisSystem
+      tags: [jarvis]
+      summary: Get comprehensive JARVIS system state
+      description: >
+        Returns health, network connectivity, recovery incidents, security
+        summary, recent agent activity, and demo-mode indicator.
+        Safe to poll; returns cached/last-known data if the runtime is slow.
+      responses:
+        "200":
+          description: System state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisSystemReport"
+        "503":
+          description: Runtime unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JarvisError"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +107,186 @@ components:
           type: string
       required:
         - status
-
+    JarvisStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        providerConfigured:
+          type: boolean
+        providerName:
+          type: string
+        version:
+          type: string
+        externalApisEnabled:
+          type: boolean
+        error:
+          type: ["string", "null"]
+      required:
+        - connected
+        - providerConfigured
+        - providerName
+        - version
+        - externalApisEnabled
+        - error
+    JarvisMessageInput:
+      type: object
+      properties:
+        goal:
+          type: string
+          minLength: 1
+          maxLength: 4000
+      required:
+        - goal
+    JarvisMessageResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        goal:
+          type: string
+        response:
+          type: string
+        providerName:
+          type: string
+      required:
+        - success
+        - goal
+        - response
+        - providerName
+    JarvisError:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+      required:
+        - error
+        - code
+    # --- System report schemas ---
+    JarvisComponentHealth:
+      type: object
+      properties:
+        component:
+          type: string
+        healthy:
+          type: boolean
+        state:
+          type: string
+        details:
+          type: string
+      required:
+        - component
+        - healthy
+        - state
+        - details
+    JarvisNetworkState:
+      type: object
+      properties:
+        connectivity:
+          type: string
+          enum: [online, degraded, offline, local_only, recovering]
+        reachableHosts:
+          type: array
+          items:
+            type: string
+        unreachableHosts:
+          type: array
+          items:
+            type: string
+        details:
+          type: string
+      required:
+        - connectivity
+        - reachableHosts
+        - unreachableHosts
+        - details
+    JarvisRecoveryIncident:
+      type: object
+      properties:
+        identifier:
+          type: string
+        serviceName:
+          type: string
+        reason:
+          type: string
+        restartCount:
+          type: number
+        timestamp:
+          type: string
+        resolved:
+          type: boolean
+      required:
+        - identifier
+        - serviceName
+        - reason
+        - restartCount
+        - timestamp
+        - resolved
+    JarvisSecuritySummary:
+      type: object
+      properties:
+        alertCount:
+          type: number
+        findingCount:
+          type: number
+        highestSeverity:
+          type: string
+        lastAssessmentAt:
+          type: ["string", "null"]
+      required:
+        - alertCount
+        - findingCount
+        - highestSeverity
+        - lastAssessmentAt
+    JarvisAgentActivity:
+      type: object
+      properties:
+        taskId:
+          type: string
+        agentName:
+          type: string
+        success:
+          type: boolean
+        summary:
+          type: string
+        timestamp:
+          type: string
+      required:
+        - taskId
+        - agentName
+        - success
+        - summary
+        - timestamp
+    JarvisSystemReport:
+      type: object
+      properties:
+        demoMode:
+          type: boolean
+        demoLabel:
+          type: ["string", "null"]
+        health:
+          type: array
+          items:
+            $ref: "#/components/schemas/JarvisComponentHealth"
+        network:
+          $ref: "#/components/schemas/JarvisNetworkState"
+        recentIncidents:
+          type: array
+          items:
+            $ref: "#/components/schemas/JarvisRecoveryIncident"
+        security:
+          $ref: "#/components/schemas/JarvisSecuritySummary"
+        recentAgentActivity:
+          type: array
+          items:
+            $ref: "#/components/schemas/JarvisAgentActivity"
+      required:
+        - demoMode
+        - demoLabel
+        - health
+        - network
+        - recentIncidents
+        - security
+        - recentAgentActivity

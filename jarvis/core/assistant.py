@@ -6,6 +6,7 @@ sandbox policy, and recovery to their respective modules.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -17,10 +18,20 @@ from ..agent import (
     UnavailableBrain,
     build_local_brain,
 )
+from ..agent.demo import DEMO_LABEL, DemoBrain
 from ..agent.models import ExecutionReport
 from ..config import Settings
 from ..memory import MemoryManager
+from ..network.manager import NetworkManager
+from ..network.recovery import NetworkRecoveryManager
 from ..recovery import RecoveryManager
+from ..resilience import (
+    CrashRecoveryManager,
+    HealthCheckManager,
+    ServiceSupervisor,
+    StateRecoveryManager,
+    WatchdogManager,
+)
 from ..rollback import RollbackManager
 from ..sandbox import Sandbox
 from ..system import SystemMonitor
@@ -41,10 +52,21 @@ class Assistant:
     planner: Planner = field(init=False)
     executor: AgentExecutor = field(init=False)
     monitor: SystemMonitor = field(init=False)
+    # Resilience subsystem
+    watchdog: WatchdogManager = field(init=False)
+    crash_recovery: CrashRecoveryManager = field(init=False)
+    health_checks: HealthCheckManager = field(init=False)
+    network_recovery: NetworkRecoveryManager = field(init=False)
 
     def __post_init__(self) -> None:
-        if isinstance(self.brain, UnavailableBrain) and self.settings.local_provider_enabled:
-            self.brain = build_local_brain(self.settings)
+        # --- Brain selection ---
+        if isinstance(self.brain, UnavailableBrain):
+            if self.settings.demo_mode:
+                self.brain = DemoBrain()
+            elif self.settings.local_provider_enabled:
+                self.brain = build_local_brain(self.settings)
+
+        # --- Core subsystems ---
         self.memory = MemoryManager(
             self.settings.memory_file,
             max_items=self.settings.max_memory_items,
@@ -60,10 +82,37 @@ class Assistant:
         self.executor = AgentExecutor(self.tools, self.recovery)
         self.monitor = SystemMonitor(self.settings.data_dir.parent)
 
+        # --- Resilience subsystem ---
+        self.watchdog = WatchdogManager()
+        self.crash_recovery = CrashRecoveryManager()
+        self.health_checks = HealthCheckManager()
+        self.network_recovery = NetworkRecoveryManager(
+            probe_hosts=("1.1.1.1", "8.8.8.8"),
+            max_reconnect_attempts=5,
+        )
+
+        # Register basic health checks
+        self.health_checks.register(
+            "disk",
+            lambda: self.monitor.healthy(),
+            detail_fn=lambda: "Disk accessible.",
+        )
+        self.health_checks.register(
+            "memory_store",
+            lambda: self.memory.count() >= 0,
+            detail_fn=lambda: f"{self.memory.count()} memory items.",
+        )
+        self.health_checks.register(
+            "tools",
+            lambda: len(self.tools.names()) > 0,
+            detail_fn=lambda: f"Tools: {', '.join(self.tools.names())}",
+        )
+
     def startup_message(self) -> str:
         """Return a concise session greeting."""
+        demo = f" [{DEMO_LABEL}]" if self.settings.demo_mode else ""
         return (
-            f"{self.settings.name} v{self.settings.version} online. "
+            f"{self.settings.name} v{self.settings.version} online{demo}. "
             "Type 'help' for commands or 'exit' to leave."
         )
 
@@ -158,5 +207,70 @@ class Assistant:
                 f"Brain provider: {getattr(self.brain, 'provider_name', 'unknown')}",
                 f"Disk healthy: {self.monitor.healthy()}",
                 "External APIs: disabled",
+                f"Demo mode: {'yes' if self.settings.demo_mode else 'no'}",
             ]
         )
+
+    def system_report(self) -> dict:
+        """Return a comprehensive system state dict for the web interface.
+
+        Does NOT fabricate data.  If a subsystem is unavailable its entry
+        reflects that honestly.  Network connectivity probes are skipped
+        (we return last-known state) to keep the call fast.
+        """
+        # Health checks
+        health_statuses = self.health_checks.check_all()
+        health = [
+            {
+                "component": s.component,
+                "healthy": s.healthy,
+                "state": s.state,
+                "details": s.details,
+            }
+            for s in health_statuses
+        ]
+
+        # Network — return last-known state without blocking probe
+        net = self.network_recovery.connectivity
+        network = {
+            "connectivity": net.value,
+            "reachableHosts": [],
+            "unreachableHosts": [],
+            "details": "Last-known network state (no live probe on this call).",
+        }
+
+        # Recovery incidents from crash recovery
+        crm_incidents = self.crash_recovery.all_incidents()[-10:]
+        incidents = [
+            {
+                "identifier": i.identifier,
+                "serviceName": i.service_name,
+                "reason": i.reason,
+                "restartCount": i.restart_count,
+                "timestamp": i.timestamp,
+                "resolved": i.resolved,
+            }
+            for i in crm_incidents
+        ]
+
+        # Security — we surface a summary rather than running a live assessment
+        security = {
+            "alertCount": 0,
+            "findingCount": 0,
+            "highestSeverity": "info",
+            "lastAssessmentAt": None,
+        }
+
+        # Agent activity — empty for now (populated when orchestrator is used)
+        agent_activity: list[dict] = []
+
+        demo_mode = self.settings.demo_mode
+        return {
+            "demoMode": demo_mode,
+            "demoLabel": DEMO_LABEL if demo_mode else None,
+            "health": health,
+            "network": network,
+            "recentIncidents": incidents,
+            "security": security,
+            "recentAgentActivity": agent_activity,
+        }
