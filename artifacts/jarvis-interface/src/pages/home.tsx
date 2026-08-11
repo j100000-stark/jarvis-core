@@ -1,6 +1,25 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'wouter';
-import { CircleHelp, Command, LockKeyhole, Sparkles } from 'lucide-react';
+/**
+ * JARVIS Cinematic Home — iPhone-first dark interface.
+ *
+ * Layout (portrait):
+ *   ┌─────────────────────────┐
+ *   │  JARVIS     [⋯] [sys]   │  ← top bar
+ *   │  ● ONLINE / STANDBY     │  ← state chip
+ *   │                         │
+ *   │      ◎ Neural Core      │  ← full-width animated canvas
+ *   │                         │
+ *   │   "No provider…"        │  ← status label
+ *   │   ≈≈ Waveform ≈≈        │
+ *   │                         │
+ *   │   [chat] [●mic] [sys]   │  ← bottom nav
+ *   └─────────────────────────┘
+ *
+ * All positive status labels (ONLINE, CONNECTED, SECURE) are only shown
+ * when the backend actually reports them. DEMO MODE is prominently labelled.
+ */
+
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { Activity, MessageSquare, Mic, MoreHorizontal, Shield, Wifi, WifiOff } from 'lucide-react';
 import {
   getGetJarvisStatusQueryKey,
   getHealthCheckQueryKey,
@@ -8,9 +27,12 @@ import {
   useHealthCheck,
   useSendJarvisMessage,
 } from '@workspace/api-client-react';
-import { Composer } from '@/components/jarvis/composer';
-import { RuntimeStatus } from '@/components/jarvis/runtime-status';
-import { SystemPanel } from '@/components/jarvis/system-panel';
+import { NeuralCore, type CoreState } from '@/components/jarvis/neural-core';
+import { Waveform } from '@/components/jarvis/waveform';
+import { ChatSheet } from '@/components/jarvis/chat-sheet';
+import { SystemSheet } from '@/components/jarvis/system-sheet';
+
+// ---- Types ----
 
 type Message = {
   id: string;
@@ -20,216 +42,475 @@ type Message = {
   time: string;
 };
 
-const formatTime = () => new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-}).format(new Date());
+const formatTime = () =>
+  new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
+
+// ---- State chip config ----
+
+const STATE_META: Record<CoreState, { label: string; color: string; dim: string }> = {
+  idle:      { label: 'Standby',         color: '#0099dd', dim: 'rgba(0,153,221,0.15)' },
+  listening: { label: 'Listening',       color: '#00aaff', dim: 'rgba(0,170,255,0.15)' },
+  thinking:  { label: 'Processing',      color: '#00ddff', dim: 'rgba(0,220,255,0.15)' },
+  speaking:  { label: 'Responding',      color: '#00ffcc', dim: 'rgba(0,255,200,0.15)' },
+  offline:   { label: 'Offline',         color: '#335566', dim: 'rgba(30,50,70,0.3)'   },
+  alert:     { label: 'Alert',           color: '#ff7700', dim: 'rgba(255,100,0,0.15)' },
+};
+
+// ---- Status text ----
+
+function deriveStatus(
+  connected: boolean | undefined,
+  providerConfigured: boolean | undefined,
+  providerName: string | undefined,
+  demoMode: boolean,
+  pending: boolean,
+  hasResponse: boolean,
+  isLoading: boolean,
+): { line1: string; line2: string | null } {
+  if (isLoading) return { line1: 'Connecting to runtime…', line2: null };
+  if (!connected) return { line1: 'Runtime unreachable', line2: 'Start the local JARVIS process' };
+  if (demoMode) return { line1: 'DEMO MODE', line2: 'Scripted responses — no real AI connected' };
+  if (!providerConfigured) return { line1: 'No provider configured', line2: 'Connect a local model to activate' };
+  if (pending) return { line1: 'Processing goal…', line2: providerName ?? null };
+  if (hasResponse) return { line1: 'Ready', line2: providerName ?? null };
+  return { line1: 'Ready', line2: providerName ?? null };
+}
+
+function deriveCoreState(
+  connected: boolean | undefined,
+  providerConfigured: boolean | undefined,
+  pending: boolean,
+  speakingFor: boolean,
+  demoMode: boolean,
+  isLoading: boolean,
+  hasAlerts: boolean,
+): CoreState {
+  // Runtime itself unreachable → dead core
+  if (isLoading || !connected) return 'offline';
+  if (hasAlerts) return 'alert';
+  // Runtime reachable but no AI brain → gentle idle pulse (the system lives, just no mind)
+  if (!providerConfigured && !demoMode) return 'idle';
+  if (pending) return 'thinking';
+  if (speakingFor) return 'speaking';
+  return 'idle';
+}
+
+// ---- Component ----
 
 export default function Home() {
   const [goal, setGoal] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [sysOpen, setSysOpen] = useState(false);
+  const [speakingFor, setSpeakingFor] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+  const speakingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const status = useGetJarvisStatus({
     query: {
       queryKey: getGetJarvisStatusQueryKey(),
-      refetchInterval: 15000,
+      refetchInterval: 15_000,
       refetchOnWindowFocus: true,
     },
   });
+
   const health = useHealthCheck({
     query: {
       queryKey: getHealthCheckQueryKey(),
-      refetchInterval: 30000,
+      refetchInterval: 30_000,
       refetchOnWindowFocus: true,
     },
   });
+
   const sendMessage = useSendJarvisMessage();
   const runtime = status.data;
-  const ready = Boolean(runtime?.connected && runtime?.providerConfigured);
-  const isStatusReading = status.isLoading && !runtime;
-  const emptyTitle = runtime?.connected && !runtime.providerConfigured
-    ? 'The brain is not configured yet'
-    : status.isError
-      ? 'JARVIS is out of reach'
-      : 'Start with a clear goal';
-  const emptyBody = runtime?.connected && !runtime.providerConfigured
-    ? 'The local runtime is reachable, but it has no provider to reason with. Add one locally, then refresh this panel.'
-    : status.isError
-      ? 'This interface cannot confirm the local runtime. Nothing will be sent until the connection is honest.'
-      : 'Tell JARVIS what outcome you want. It will return the result from the configured local provider.';
+
+  // Detect demo mode from provider name
+  useEffect(() => {
+    if (runtime?.providerName?.toLowerCase().includes('demo')) {
+      setDemoMode(true);
+    } else {
+      setDemoMode(false);
+    }
+  }, [runtime?.providerName]);
 
   const sendError = useMemo(() => {
     if (!sendMessage.error) return null;
-    const error = sendMessage.error as { error?: string; message?: string };
-    return error.error || error.message || 'The local runtime rejected that goal.';
+    const e = sendMessage.error as { error?: string; message?: string };
+    return e.error ?? e.message ?? 'The runtime rejected that goal.';
   }, [sendMessage.error]);
 
+  const coreState = deriveCoreState(
+    runtime?.connected,
+    runtime?.providerConfigured,
+    sendMessage.isPending,
+    speakingFor,
+    demoMode,
+    status.isLoading && !runtime,
+    false, // alert: reserved for security state from /jarvis/system
+  );
+
+  const statusText = deriveStatus(
+    runtime?.connected,
+    runtime?.providerConfigured,
+    runtime?.providerName ?? undefined,
+    demoMode,
+    sendMessage.isPending,
+    messages.some((m) => m.role === 'assistant'),
+    status.isLoading && !runtime,
+  );
+
+  const ready = Boolean(runtime?.connected && (runtime?.providerConfigured || demoMode));
+
   const handleSend = () => {
-    const trimmedGoal = goal.trim();
-    if (!trimmedGoal || !ready || sendMessage.isPending) return;
+    const trimmed = goal.trim();
+    if (!trimmed || !ready || sendMessage.isPending) return;
     const sentAt = formatTime();
-    setMessages((current) => [...current, {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      body: trimmedGoal,
-      time: sentAt,
-    }]);
+    setMessages((cur) => [...cur, { id: `u-${Date.now()}`, role: 'user', body: trimmed, time: sentAt }]);
     setGoal('');
-    sendMessage.mutate({ data: { goal: trimmedGoal } }, {
+    sendMessage.mutate({ data: { goal: trimmed } }, {
       onSuccess: (result) => {
-        setMessages((current) => [...current, {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          body: result.response,
-          providerName: result.providerName,
-          time: formatTime(),
-        }]);
+        setMessages((cur) => [
+          ...cur,
+          { id: `a-${Date.now()}`, role: 'assistant', body: result.response, providerName: result.providerName, time: formatTime() },
+        ]);
+        setSpeakingFor(true);
+        if (speakingTimer.current) clearTimeout(speakingTimer.current);
+        speakingTimer.current = setTimeout(() => setSpeakingFor(false), 3000);
       },
     });
   };
 
-  const refreshAll = () => {
-    void status.refetch();
-    void health.refetch();
-  };
+  const meta = STATE_META[coreState];
+
+  // Dynamic core size: fill the screen between top bar and bottom nav
+  // We use a CSS variable approach; the canvas is square, sized to min(vw, available-vh)
+  const coreSize = 320;
 
   return (
-    <div className="jarvis-shell min-h-[100dvh] bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
-      <div className="jarvis-grain" />
-      <div className="mx-auto flex min-h-[100dvh] max-w-[1500px] flex-col lg:flex-row">
-        {/* ---------------------------------------------------------------- */}
-        {/* Sidebar */}
-        {/* ---------------------------------------------------------------- */}
-        <aside className="flex w-full shrink-0 flex-col bg-[hsl(var(--sidebar))] px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(1.1rem,env(safe-area-inset-top))] text-[hsl(var(--sidebar-foreground))] lg:min-h-[100dvh] lg:w-[300px] lg:overflow-y-auto lg:px-7 lg:py-8">
-          {/* Identity */}
-          <div className="flex items-center justify-between lg:block">
-            <Link href="/" className="group inline-flex items-center gap-3" data-testid="link-home">
-              <div className="relative flex size-10 items-center justify-center rounded-[13px] bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] shadow-[0_0_0_5px_hsl(var(--accent)/.12)]">
-                <span className="font-mono text-[15px] font-bold tracking-[-0.12em]">J·</span>
-              </div>
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/50">Local system</p>
-                <p className="mt-0.5 text-[17px] font-semibold tracking-[-0.04em] text-white">JARVIS</p>
-              </div>
-            </Link>
-            <span className="rounded-full border border-white/12 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.17em] text-white/45 lg:hidden">iOS ready</span>
-          </div>
+    <div
+      className="jarvis-cinematic relative flex min-h-[100dvh] flex-col overflow-hidden select-none"
+      style={{ background: '#000408' }}
+    >
+      {/* ---------------------------------------------------------------- */}
+      {/* Star field background */}
+      {/* ---------------------------------------------------------------- */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          background:
+            'radial-gradient(ellipse at 50% 35%, rgba(0,60,120,0.22) 0%, transparent 65%), radial-gradient(ellipse at 20% 80%, rgba(0,40,90,0.12) 0%, transparent 50%)',
+        }}
+      />
 
-          <div className="mt-8 hidden lg:block">
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">Control surface</p>
-            <p className="mt-3 max-w-[210px] text-[25px] font-medium leading-[1.08] tracking-[-0.06em] text-white/95">
-              Quietly capable.<br /><span className="text-white/45">Precisely yours.</span>
+      {/* ---------------------------------------------------------------- */}
+      {/* Top bar */}
+      {/* ---------------------------------------------------------------- */}
+      <header
+        className="relative z-10 flex items-center justify-between px-5"
+        style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: '0.75rem' }}
+      >
+        <div className="flex items-center gap-3">
+          {/* J· logo mark */}
+          <div
+            className="flex size-9 items-center justify-center rounded-[11px] font-mono text-[14px] font-bold"
+            style={{
+              background: 'rgba(0,130,255,0.18)',
+              border: '1px solid rgba(0,160,255,0.28)',
+              color: '#00aaff',
+              textShadow: '0 0 12px rgba(0,160,255,0.8)',
+            }}
+          >
+            J·
+          </div>
+          <div>
+            <p
+              className="font-mono text-[9px] uppercase tracking-[0.22em]"
+              style={{ color: 'rgba(0,160,255,0.45)' }}
+            >
+              Local system
+            </p>
+            <p className="text-[16px] font-semibold tracking-[-0.04em]" style={{ color: 'rgba(255,255,255,0.9)' }}>
+              JARVIS
             </p>
           </div>
+        </div>
 
-          {/* Runtime status card */}
-          <div className="mt-5 lg:mt-8">
-            <RuntimeStatus
-              connected={runtime?.connected}
-              providerConfigured={runtime?.providerConfigured}
-              providerName={runtime?.providerName}
-              version={runtime?.version}
-              externalApisEnabled={runtime?.externalApisEnabled}
-              runtimeError={runtime?.error}
-              isLoading={isStatusReading}
-              isError={status.isError}
-              onRefresh={refreshAll}
-              isRefreshing={status.isFetching || health.isFetching}
+        <div className="flex items-center gap-2">
+          {/* Version micro-badge */}
+          <span
+            className="rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.14em]"
+            style={{ background: 'rgba(0,160,255,0.08)', color: 'rgba(0,160,255,0.4)', border: '1px solid rgba(0,160,255,0.12)' }}
+          >
+            {runtime?.version ?? 'v0.1'}
+          </span>
+          {/* System status button */}
+          <button
+            type="button"
+            onClick={() => setSysOpen(true)}
+            className="flex size-9 items-center justify-center rounded-xl transition active:scale-95"
+            style={{ color: 'rgba(0,160,255,0.5)', background: 'rgba(0,160,255,0.06)', border: '1px solid rgba(0,160,255,0.10)' }}
+            aria-label="System status"
+            data-testid="button-open-system"
+          >
+            <Shield size={16} />
+          </button>
+          <button
+            type="button"
+            className="flex size-9 items-center justify-center rounded-xl"
+            style={{ color: 'rgba(255,255,255,0.25)' }}
+            aria-label="More options"
+          >
+            <MoreHorizontal size={18} />
+          </button>
+        </div>
+      </header>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* State chip */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="relative z-10 flex justify-center py-1.5">
+        <div
+          className="flex items-center gap-2 rounded-full px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.15em]"
+          style={{
+            background: meta.dim,
+            border: `1px solid ${meta.color}28`,
+            color: meta.color,
+            boxShadow: `0 0 16px ${meta.color}14`,
+          }}
+          data-testid="status-chip"
+        >
+          <span
+            className="size-1.5 rounded-full"
+            style={{
+              background: meta.color,
+              boxShadow: `0 0 6px ${meta.color}`,
+              animation: coreState === 'offline' ? 'none' : 'pulse 2s infinite',
+            }}
+          />
+          {meta.label}
+          {demoMode && <span style={{ color: 'rgba(255,180,0,0.7)', marginLeft: 4 }}>· demo</span>}
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Neural core — the hero element */}
+      {/* ---------------------------------------------------------------- */}
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center py-2">
+        {/* Outer glow ring behind canvas */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute rounded-full"
+          style={{
+            width: coreSize + 80,
+            height: coreSize + 80,
+            background: `radial-gradient(circle, ${meta.color}0a 0%, transparent 70%)`,
+            boxShadow: `0 0 120px 20px ${meta.color}08`,
+          }}
+        />
+
+        {/* Canvas core */}
+        <div className="relative" data-testid="neural-core-container">
+          <NeuralCore state={coreState} size={coreSize} />
+        </div>
+
+        {/* Status text */}
+        <div className="mt-5 flex flex-col items-center gap-1 px-6 text-center">
+          <p
+            className="text-[15px] font-medium tracking-[-0.02em]"
+            style={{
+              color: coreState === 'offline' ? 'rgba(80,120,160,0.7)' : demoMode ? 'rgba(255,180,0,0.85)' : 'rgba(255,255,255,0.85)',
+            }}
+            data-testid="text-status-line1"
+          >
+            {statusText.line1}
+          </p>
+          {statusText.line2 && (
+            <p
+              className="font-mono text-[10px] uppercase tracking-[0.16em]"
+              style={{ color: 'rgba(0,160,255,0.4)' }}
+              data-testid="text-status-line2"
+            >
+              {statusText.line2}
+            </p>
+          )}
+        </div>
+
+        {/* Waveform */}
+        <div className="mt-4 flex items-center justify-center opacity-80">
+          <Waveform state={coreState} width={200} height={36} />
+        </div>
+      </main>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Network indicator strip */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="relative z-10 flex justify-center pb-2">
+        <div className="flex items-center gap-2" style={{ color: 'rgba(0,160,255,0.28)' }}>
+          {runtime?.connected
+            ? <Wifi size={11} />
+            : <WifiOff size={11} />}
+          <span className="font-mono text-[8px] uppercase tracking-[0.14em]">
+            {runtime?.connected ? 'Runtime reachable' : 'Runtime unreachable'}
+          </span>
+          {!runtime?.externalApisEnabled && runtime?.connected && (
+            <span className="font-mono text-[8px] uppercase tracking-[0.14em]" style={{ color: 'rgba(0,160,255,0.2)' }}>
+              · local only
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Bottom action bar */}
+      {/* ---------------------------------------------------------------- */}
+      <nav
+        className="relative z-10 flex items-center justify-around px-6"
+        style={{
+          paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))',
+          paddingTop: '1rem',
+          borderTop: '1px solid rgba(0,160,255,0.07)',
+          background: 'linear-gradient(to top, rgba(0,4,12,0.95), transparent)',
+        }}
+      >
+        {/* Chat */}
+        <NavButton
+          onClick={() => setChatOpen(true)}
+          label="Chat"
+          icon={<MessageSquare size={20} />}
+          badge={messages.length > 0 ? messages.length : undefined}
+          data-testid="button-open-chat"
+        />
+
+        {/* Central mic / tap-to-speak */}
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          disabled={!ready}
+          className="flex flex-col items-center gap-1.5 transition active:scale-95 disabled:opacity-40"
+          aria-label="Tap to speak or type a goal"
+          data-testid="button-tap-to-speak"
+        >
+          <div
+            className="flex size-[68px] items-center justify-center rounded-full"
+            style={{
+              background: ready
+                ? `radial-gradient(circle at 40% 35%, ${meta.color}28, rgba(0,0,0,0.7))`
+                : 'rgba(30,40,50,0.7)',
+              border: `2px solid ${ready ? meta.color + '55' : 'rgba(60,80,100,0.3)'}`,
+              boxShadow: ready
+                ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10`
+                : 'none',
+            }}
+          >
+            <Mic
+              size={26}
+              style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }}
             />
           </div>
-
-          {/* Session footer */}
-          <div className="mt-5 hidden items-center justify-between font-mono text-[9px] uppercase tracking-[0.16em] text-white/35 lg:flex">
-            <span>Session protected</span>
-            <LockKeyhole size={12} />
-          </div>
-        </aside>
-
-        {/* ---------------------------------------------------------------- */}
-        {/* Main content */}
-        {/* ---------------------------------------------------------------- */}
-        <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* Conversation column */}
-          <div className="flex min-h-0 flex-1 flex-col">
-            <header className="flex items-center justify-between border-b border-[hsl(var(--border)/.75)] px-5 py-4 sm:px-8 lg:px-12 lg:py-6">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--muted-foreground))]">Conversation / 01</p>
-                <h1 className="mt-1 text-[21px] font-semibold tracking-[-0.05em] sm:text-[24px]">Live channel</h1>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <span className={`flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.13em] ${ready ? 'border-[hsl(var(--accent)/.5)] bg-[hsl(var(--accent)/.1)] text-[hsl(78_58%_30%)]' : 'border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]'}`} data-testid="status-channel">
-                  <span className={`size-1.5 rounded-full ${ready ? 'jarvis-dot-pulse bg-[hsl(var(--accent))]' : 'bg-[hsl(var(--muted-foreground)/.55)]'}`} />
-                  {ready ? 'Ready' : 'Standby'}
-                </span>
-                <button type="button" className="flex size-10 items-center justify-center rounded-xl border border-transparent text-[hsl(var(--muted-foreground))] transition hover:border-[hsl(var(--border))] hover:text-[hsl(var(--foreground))]" aria-label="Conversation help" data-testid="button-conversation-help">
-                  <CircleHelp size={18} />
-                </button>
-              </div>
-            </header>
-
-            <section className="flex min-h-0 flex-1 flex-col px-5 pb-4 pt-6 sm:px-8 lg:px-12 lg:pt-10">
-              <div className="mx-auto flex w-full max-w-[850px] flex-1 flex-col">
-                {messages.length === 0 ? (
-                  <div className="jarvis-rise flex flex-1 flex-col justify-center py-8 sm:py-16" data-testid="empty-conversation">
-                    <div className="mb-7 flex size-14 items-center justify-center rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--primary))] shadow-[var(--shadow-sm)]">
-                      <Sparkles size={23} strokeWidth={1.7} />
-                    </div>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--muted-foreground))]">Awaiting instruction</p>
-                    <h2 className="mt-3 max-w-[600px] text-[clamp(2.2rem,7vw,4.8rem)] font-semibold leading-[.94] tracking-[-0.08em]" data-testid="text-empty-title">{emptyTitle}</h2>
-                    <p className="mt-6 max-w-[480px] text-[15px] leading-7 text-[hsl(var(--muted-foreground))]" data-testid="text-empty-description">{emptyBody}</p>
-                    <div className="mt-8 flex flex-wrap gap-2">
-                      {['Prepare a concise plan', 'Summarize my next steps'].map((suggestion) => (
-                        <button key={suggestion} type="button" disabled={!ready} onClick={() => setGoal(suggestion)} className="rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card)/.65)] px-3.5 py-2 text-left text-xs text-[hsl(var(--muted-foreground))] transition hover:border-[hsl(var(--accent)/.7)] hover:text-[hsl(var(--foreground))] disabled:cursor-not-allowed disabled:opacity-45" data-testid={`button-suggestion-${suggestion.toLowerCase().replaceAll(' ', '-')}`}>{suggestion}</button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 space-y-7 overflow-y-auto pb-8 pr-1" data-testid="conversation-list">
-                    {messages.map((message) => (
-                      <article key={message.id} className={`jarvis-rise flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`} data-testid={`message-${message.role}-${message.id}`}>
-                        {message.role === 'assistant' && <div className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--primary))] font-mono text-[11px] font-bold text-[hsl(var(--primary-foreground))]">J·</div>}
-                        <div className={`max-w-[min(88%,650px)] ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
-                          <div className={`rounded-2xl px-4 py-3.5 text-[15px] leading-7 ${message.role === 'user' ? 'rounded-br-md bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'rounded-bl-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] shadow-[var(--shadow-sm)]'}`}>
-                            <p className="whitespace-pre-wrap">{message.body}</p>
-                          </div>
-                          <div className={`mt-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.12em] text-[hsl(var(--muted-foreground))] ${message.role === 'user' ? 'justify-end' : ''}`}>
-                            <span>{message.time}</span>
-                            {message.providerName && <><span>·</span><span>{message.providerName}</span></>}
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                    {sendMessage.isPending && (
-                      <article className="jarvis-rise flex gap-3" data-testid="message-assistant-loading">
-                        <div className="mt-1 flex size-8 items-center justify-center rounded-xl bg-[hsl(var(--primary))] font-mono text-[11px] font-bold text-[hsl(var(--primary-foreground))]">J·</div>
-                        <div className="flex items-center gap-1 rounded-2xl rounded-bl-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-5 py-4 shadow-[var(--shadow-sm)]">
-                          <i className="jarvis-dot-pulse size-1.5 rounded-full bg-[hsl(var(--accent-foreground))]" />
-                          <i className="jarvis-dot-pulse size-1.5 rounded-full bg-[hsl(var(--accent-foreground))] [animation-delay:140ms]" />
-                          <i className="jarvis-dot-pulse size-1.5 rounded-full bg-[hsl(var(--accent-foreground))] [animation-delay:280ms]" />
-                        </div>
-                      </article>
-                    )}
-                    {sendError && <div className="rounded-xl border border-[hsl(var(--destructive)/.3)] bg-[hsl(var(--destructive)/.08)] px-4 py-3 text-sm text-[hsl(var(--destructive))]" data-testid="text-message-error">{sendError}</div>}
-                  </div>
-                )}
-
-                <div className="mt-auto pt-4">
-                  <Composer value={goal} onChange={setGoal} onSubmit={handleSend} disabled={!ready} isPending={sendMessage.isPending} />
-                  <p className="mt-3 text-center font-mono text-[9px] uppercase tracking-[0.14em] text-[hsl(var(--muted-foreground)/.7)]"><Command size={10} className="mr-1 inline-block -translate-y-px" /> JARVIS only acts on the goal you send</p>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          {/* System status rail — hidden on mobile, visible on large screens */}
-          <aside
-            className="hidden w-[320px] shrink-0 overflow-y-auto border-l border-[hsl(var(--border)/.6)] bg-[hsl(var(--background)/.5)] px-5 py-6 xl:block"
-            data-testid="panel-system-rail"
+          <span
+            className="font-mono text-[8px] uppercase tracking-[0.14em]"
+            style={{ color: ready ? 'rgba(0,160,255,0.45)' : 'rgba(60,80,100,0.5)' }}
           >
-            <p className="mb-4 font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(var(--muted-foreground))]">System status</p>
-            <SystemPanel />
-          </aside>
-        </main>
-      </div>
+            {ready ? 'Tap to speak' : 'Not ready'}
+          </span>
+        </button>
+
+        {/* System */}
+        <NavButton
+          onClick={() => setSysOpen(true)}
+          label="System"
+          icon={<Activity size={20} />}
+          data-testid="button-open-system-nav"
+        />
+      </nav>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Sheets */}
+      {/* ---------------------------------------------------------------- */}
+      <ChatSheet
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        messages={messages}
+        goal={goal}
+        onGoalChange={setGoal}
+        onSend={handleSend}
+        disabled={!ready}
+        isPending={sendMessage.isPending}
+        sendError={sendError}
+      />
+      <SystemSheet open={sysOpen} onClose={() => setSysOpen(false)} />
+
+      {/* ---------------------------------------------------------------- */}
+      {/* DEMO MODE banner overlay (bottom, above nav) */}
+      {/* ---------------------------------------------------------------- */}
+      {demoMode && (
+        <div
+          className="pointer-events-none absolute bottom-[100px] left-0 right-0 z-20 flex justify-center"
+          data-testid="banner-demo-mode"
+        >
+          <div
+            className="rounded-full px-4 py-1.5"
+            style={{
+              background: 'rgba(200,120,0,0.14)',
+              border: '1px solid rgba(255,160,0,0.35)',
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            <span
+              className="font-mono text-[9px] uppercase tracking-[0.2em]"
+              style={{ color: 'rgba(255,180,60,0.85)' }}
+            >
+              ◈ demo mode — no real ai connected
+            </span>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ---- Sub-components ----
+
+interface NavButtonProps {
+  onClick: () => void;
+  label: string;
+  icon: React.ReactNode;
+  badge?: number;
+  'data-testid'?: string;
+}
+
+function NavButton({ onClick, label, icon, badge, 'data-testid': testid }: NavButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative flex flex-col items-center gap-1.5 transition active:scale-95"
+      aria-label={label}
+      data-testid={testid}
+    >
+      <div
+        className="flex size-12 items-center justify-center rounded-2xl"
+        style={{
+          background: 'rgba(0,160,255,0.07)',
+          border: '1px solid rgba(0,160,255,0.10)',
+          color: 'rgba(0,160,255,0.55)',
+        }}
+      >
+        {icon}
+      </div>
+      {badge !== undefined && (
+        <span
+          className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full font-mono text-[8px] font-bold"
+          style={{ background: '#0099cc', color: '#fff' }}
+        >
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
+      <span className="font-mono text-[8px] uppercase tracking-[0.14em]" style={{ color: 'rgba(0,160,255,0.35)' }}>
+        {label}
+      </span>
+    </button>
   );
 }

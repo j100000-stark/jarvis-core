@@ -1,0 +1,58 @@
+Redesign the existing JARVIS mobile web interface completely. Keep all existing backend routes, API contracts, runtime logic, agent architecture, security, resilience, and provider architecture unchanged.
+
+Replace the current dashboard-style visual design with a cinematic futuristic JARVIS interface optimized primarily for iPhone.
+
+The main visual element must be a large centered electric-blue neural AI core: a glowing spherical mesh made of interconnected nodes, thin neural filaments, particles, concentric rings and flowing energy connections. The visual should resemble a living artificial neural network rather than a static icon.
+
+The neural core must be a real interactive animation implemented in the frontend, not a static image.
+
+Create distinct visual states driven by the actual JARVIS runtime:
+
+IDLE — slow breathing/pulsing core with subtle neural movement.
+
+LISTENING — neural filaments become active and react to microphone/input activity.
+
+THINKING — increased node activity, faster flowing connections and stronger core pulses.
+
+SPEAKING — neural activity reacts to the assistant’s audio/response state.
+
+OFFLINE — visually indicate loss of connection without pretending JARVIS is operational.
+
+ALERT — visually distinct warning state for real security/system alerts.
+
+Keep the screen extremely clean. Do not recreate the previous three-column dashboard on mobile.
+
+UI structure:
+
+* JARVIS name/status at top
+* central neural core occupying most of the screen
+* minimal runtime state text
+* small audio waveform
+* large microphone/tap-to-speak control at bottom
+* minimal access to chat/system/agents/settings
+
+Visual direction:
+
+* deep black background
+* electric blue/cyan neural core
+* subtle glow
+* glass/holographic details
+* futuristic but elegant
+* no excessive panels
+* no stock images
+* no static fake system data
+* smooth 60fps animation where possible
+* responsive to iPhone screen sizes
+
+The UI must remain connected to the existing real API state. Never display ONLINE, AI CONNECTED, SECURITY SAFE, or other positive states unless the backend actually reports them.
+
+Keep DEMO MODE clearly labelled when DemoBrain is active.
+
+Do not modify the Python backend or existing agent architecture unless absolutely necessary for exposing an existing runtime state to the UI.
+
+After implementation:
+
+1. Run the TypeScript typecheck.
+2. Run the existing Python test suite.
+3. Verify the mobile layout.
+4. Report all modified files and test results.
