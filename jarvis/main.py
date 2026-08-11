@@ -32,6 +32,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Plan and execute one high-level goal using the configured Brain.",
     )
     parser.add_argument(
+        "--goal-json",
+        metavar="GOAL",
+        dest="goal_json",
+        help=(
+            "Plan and execute one high-level goal and output structured JSON "
+            "with per-step results, verification, and demo-mode labelling."
+        ),
+    )
+    parser.add_argument(
         "--system-report",
         action="store_true",
         help="Output a JSON system report (health, network, recovery, security) and exit.",
@@ -48,6 +57,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.system_report:
         report = assistant.system_report()
         print(json.dumps(report))
+        return
+
+    if args.goal_json is not None:
+        result = assistant.execute_goal_structured(args.goal_json)
+        print(json.dumps(result))
         return
 
     if args.goal is not None:

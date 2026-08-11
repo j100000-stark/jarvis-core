@@ -1,0 +1,82 @@
+Enable the existing DemoBrain/DemoProvider for a complete end-to-end JARVIS demonstration.
+
+Do NOT modify or replace the real Brain/AIProvider or LocalAIProvider architecture.
+
+Requirements:
+
+1. Add a clear configuration option to enable DemoBrain, using the existing JARVIS_DEMO_MODE setting.
+2. Make sure the web interface can detect the actual DemoBrain provider state from the backend.
+3. When DemoBrain is enabled, show:
+   "DEMO MODE — NO REAL AI CONNECTED"
+4. Allow the user to send natural-language goals from the existing mobile JARVIS interface.
+5. The DemoBrain must execute the existing safe agent pipeline:
+
+USER GOAL
+→ PLANNER
+→ AGENT SELECTION
+→ TOOL EXECUTION
+→ VERIFICATION
+→ RESULT
+
+6. Create several deterministic demo goals so we can test different behaviors, for example:
+   - "Check the system"
+   - "Check network status"
+   - "Run a security check"
+   - "Remember that my name is San"
+   - "Give me a system report"
+
+7. The demo must use the existing real architecture:
+   - AgentOrchestrator
+   - AgentExecutor
+   - MemoryManager
+   - SystemMonitor
+   - NetworkRecoveryManager
+   - SecurityCommander
+   - existing safe tools
+
+8. Do not fabricate live system information. If a value is unavailable, explicitly report it as unavailable.
+
+9. Connect the execution state to the existing neural-core UI:
+   - idle → idle
+   - request submitted → thinking
+   - response being generated/returned → speaking
+   - security alert → alert
+   - runtime unreachable → offline
+
+10. Add visible execution details in the chat sheet:
+    - goal
+    - selected agents
+    - steps
+    - tool results
+    - verification
+    - final report
+
+11. Keep the interface cinematic and minimal. Do not restore the old dashboard.
+
+12. Keep all safety boundaries intact. Demo mode must never gain unrestricted system access.
+
+13. Add tests for:
+    - DemoBrain activation
+    - demo provider status
+    - goal execution
+    - agent orchestration
+    - tool execution
+    - verification
+    - memory
+    - system report
+    - UI/API response
+
+14. Run:
+
+python -m unittest discover -s tests -v
+
+and the frontend TypeScript check.
+
+Do not finish until all tests pass.
+
+Finally, report:
+- files modified
+- demo commands/goals available
+- test result
+- how to enable DemoBrain
+- how to disable DemoBrain

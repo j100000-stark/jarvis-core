@@ -138,6 +138,31 @@ components:
           maxLength: 4000
       required:
         - goal
+    JarvisExecutionStep:
+      type: object
+      properties:
+        stepId:
+          type: string
+        objective:
+          type: string
+        tool:
+          type: string
+        output:
+          type: string
+        error:
+          type: ["string", "null"]
+        verified:
+          type: boolean
+        verification:
+          type: string
+      required:
+        - stepId
+        - objective
+        - tool
+        - output
+        - error
+        - verified
+        - verification
     JarvisMessageResponse:
       type: object
       properties:
@@ -149,11 +174,31 @@ components:
           type: string
         providerName:
           type: string
+        demoMode:
+          type: boolean
+        demoLabel:
+          type: ["string", "null"]
+        planGoal:
+          type: ["string", "null"]
+        planProvider:
+          type: ["string", "null"]
+        executionSteps:
+          type: array
+          items:
+            $ref: "#/components/schemas/JarvisExecutionStep"
+        failure:
+          type: ["string", "null"]
       required:
         - success
         - goal
         - response
         - providerName
+        - demoMode
+        - demoLabel
+        - planGoal
+        - planProvider
+        - executionSteps
+        - failure
     JarvisError:
       type: object
       properties:

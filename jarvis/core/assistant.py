@@ -169,9 +169,75 @@ class Assistant:
                 "The incident was recorded locally."
             )
 
+    def execute_goal_structured(self, goal: str) -> dict:
+        """Run a goal through Planner → Executor and return structured JSON-serialisable details.
+
+        Delegates to run_goal() so the demo-mode Planner bypass is applied
+        automatically.  Returns a dict with the full execution trace: per-step
+        results with tool output and verification, overall success, and
+        demo-mode labelling.  Never fabricates results.
+        """
+        try:
+            # run_goal() handles the demo-mode Planner bypass internally
+            report = self.run_goal(goal)
+            # Recover the plan goal from the report (stored in ExecutionReport.goal)
+            plan_goal = report.goal
+            plan_provider = getattr(self.brain, "provider_name", "unknown")
+            execution_steps = [
+                {
+                    "stepId": sr.step.identifier,
+                    "objective": sr.step.objective,
+                    "tool": sr.step.tool_name,
+                    "output": sr.result.output or "",
+                    "error": sr.result.error,
+                    "verified": sr.verified,
+                    "verification": sr.step.verification,
+                }
+                for sr in report.steps
+            ]
+            return {
+                "success": report.success,
+                "goal": goal,
+                "response": self._format_execution_report(report),
+                "providerName": plan_provider,
+                "demoMode": self.settings.demo_mode,
+                "demoLabel": DEMO_LABEL if self.settings.demo_mode else None,
+                "planGoal": plan_goal,
+                "planProvider": plan_provider,
+                "executionSteps": execution_steps,
+                "failure": report.failure,
+            }
+        except Exception as error:
+            incident = self.recovery.record(error, operation="execute_goal_structured")
+            return {
+                "success": False,
+                "goal": goal,
+                "response": (
+                    f"Goal execution failed ({incident.identifier}). "
+                    "The incident was recorded locally."
+                ),
+                "providerName": getattr(self.brain, "provider_name", "unknown"),
+                "demoMode": self.settings.demo_mode,
+                "demoLabel": DEMO_LABEL if self.settings.demo_mode else None,
+                "planGoal": None,
+                "planProvider": None,
+                "executionSteps": [],
+                "failure": str(error),
+            }
+
     def run_goal(self, goal: str) -> ExecutionReport:
-        """Plan and execute a high-level goal through the safe tool boundary."""
-        plan = self.planner.create_plan(goal)
+        """Plan and execute a high-level goal through the safe tool boundary.
+
+        In demo mode the Planner validation is bypassed because DemoBrain
+        intentionally prefixes plan.goal with the DEMO label, which would
+        fail the Planner's exact-equality check.  All other safety gates
+        (sandbox, tool boundary, executor) remain active.
+        """
+        if self.settings.demo_mode:
+            # Bypass Planner validation for DemoBrain — it prefixes plan.goal
+            plan = self.brain.plan(goal, tuple(self.memory.context_for(goal)))
+        else:
+            plan = self.planner.create_plan(goal)
         return self.executor.execute(
             plan,
             ToolContext(

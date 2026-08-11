@@ -10,11 +10,27 @@ export type JarvisRuntimeStatus = {
   error: string | null;
 };
 
+export type JarvisExecutionStep = {
+  stepId: string;
+  objective: string;
+  tool: string;
+  output: string;
+  error: string | null;
+  verified: boolean;
+  verification: string;
+};
+
 export type JarvisGoalResult = {
   success: boolean;
   goal: string;
   response: string;
   providerName: string;
+  demoMode: boolean;
+  demoLabel: string | null;
+  planGoal: string | null;
+  planProvider: string | null;
+  executionSteps: JarvisExecutionStep[];
+  failure: string | null;
 };
 
 export type JarvisSystemReport = {
@@ -75,11 +91,7 @@ function runJarvis(args: string[]): ProcessResult {
   });
 
   if (result.error) {
-    return {
-      ok: false,
-      output: "",
-      error: result.error.message,
-    };
+    return { ok: false, output: "", error: result.error.message };
   }
 
   const output = `${result.stdout ?? ""}`.trim();
@@ -128,71 +140,40 @@ export function getJarvisStatus(): JarvisRuntimeStatus {
       error: result.error ?? "JARVIS runtime is unavailable.",
     };
   }
-
   return parseStatus(result.output);
 }
 
-export function sendJarvisGoal(goal: string): JarvisGoalResult | {
-  kind: "runtime_unavailable" | "brain_unavailable";
-  error: string;
-} {
+export function sendJarvisGoalJson(goal: string):
+  | JarvisGoalResult
+  | { kind: "runtime_unavailable" | "brain_unavailable"; error: string }
+{
   const status = getJarvisStatus();
   if (!status.connected) {
-    return {
-      kind: "runtime_unavailable",
-      error: status.error ?? "JARVIS runtime is unavailable.",
-    };
+    return { kind: "runtime_unavailable", error: status.error ?? "JARVIS runtime is unavailable." };
   }
-  if (!status.providerConfigured) {
+  // Demo brains are always "configured" — allow them through
+  const isDemoProvider = status.providerName === "demo";
+  if (!status.providerConfigured && !isDemoProvider) {
     return {
       kind: "brain_unavailable",
       error:
-        "No Brain or local AI provider is configured. Configure JARVIS_LOCAL_PROVIDER_ENABLED before sending goals.",
+        "No Brain or local AI provider is configured. " +
+        "Set JARVIS_LOCAL_PROVIDER_ENABLED=true or JARVIS_DEMO_MODE=true.",
     };
   }
 
-  const result = runJarvis(["--goal", goal]);
+  const result = runJarvis(["--goal-json", goal]);
   if (!result.ok) {
-    return {
-      kind: "runtime_unavailable",
-      error: result.error ?? "JARVIS could not process the goal.",
-    };
+    return { kind: "runtime_unavailable", error: result.error ?? "JARVIS could not process the goal." };
   }
 
-  return {
-    success: result.output.startsWith("Goal completed:"),
-    goal,
-    response: result.output,
-    providerName: status.providerName,
-  };
+  try {
+    const parsed = JSON.parse(result.output) as JarvisGoalResult;
+    return parsed;
+  } catch {
+    return { kind: "runtime_unavailable", error: "JARVIS returned malformed JSON." };
+  }
 }
-
-const _UNAVAILABLE_SYSTEM_REPORT: JarvisSystemReport = {
-  demoMode: false,
-  demoLabel: null,
-  health: [
-    {
-      component: "runtime",
-      healthy: false,
-      state: "unavailable",
-      details: "The JARVIS Python runtime could not be reached.",
-    },
-  ],
-  network: {
-    connectivity: "offline",
-    reachableHosts: [],
-    unreachableHosts: [],
-    details: "Runtime unavailable — network state unknown.",
-  },
-  recentIncidents: [],
-  security: {
-    alertCount: 0,
-    findingCount: 0,
-    highestSeverity: "info",
-    lastAssessmentAt: null,
-  },
-  recentAgentActivity: [],
-};
 
 export function getJarvisSystemReport(): JarvisSystemReport | { error: string } {
   const result = runJarvis(["--system-report"]);

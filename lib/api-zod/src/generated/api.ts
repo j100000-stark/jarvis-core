@@ -47,7 +47,21 @@ export const SendJarvisMessageResponse = zod.object({
   "success": zod.boolean(),
   "goal": zod.string(),
   "response": zod.string(),
-  "providerName": zod.string()
+  "providerName": zod.string(),
+  "demoMode": zod.boolean(),
+  "demoLabel": zod.string().nullable(),
+  "planGoal": zod.string().nullable(),
+  "planProvider": zod.string().nullable(),
+  "executionSteps": zod.array(zod.object({
+  "stepId": zod.string(),
+  "objective": zod.string(),
+  "tool": zod.string(),
+  "output": zod.string(),
+  "error": zod.string().nullable(),
+  "verified": zod.boolean(),
+  "verification": zod.string()
+})),
+  "failure": zod.string().nullable()
 })
 
 

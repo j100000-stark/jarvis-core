@@ -3,19 +3,21 @@
  *
  * Layout (portrait):
  *   ┌─────────────────────────┐
- *   │  JARVIS     [⋯] [sys]   │  ← top bar
- *   │  ● ONLINE / STANDBY     │  ← state chip
- *   │                         │
- *   │      ◎ Neural Core      │  ← full-width animated canvas
- *   │                         │
- *   │   "No provider…"        │  ← status label
- *   │   ≈≈ Waveform ≈≈        │
- *   │                         │
- *   │   [chat] [●mic] [sys]   │  ← bottom nav
+ *   │  JARVIS        [🛡] [⋯]  │  ← top bar
+ *   │  ● STANDBY / PROCESSING  │  ← state chip
+ *   │                          │
+ *   │       ◎ Neural Core      │  ← full-width canvas
+ *   │                          │
+ *   │   "No provider…"         │  ← status label
+ *   │   ≈≈ Waveform ≈≈         │
+ *   │                          │
+ *   │  [chat]  [●mic]  [sys]   │  ← bottom nav
  *   └─────────────────────────┘
  *
- * All positive status labels (ONLINE, CONNECTED, SECURE) are only shown
- * when the backend actually reports them. DEMO MODE is prominently labelled.
+ * All positive labels (READY, CONNECTED, SECURE) are only shown when
+ * the backend actually reports them.  DEMO MODE is prominently labelled.
+ * Execution trace (agents, steps, tool outputs, verification) is shown
+ * inside the chat sheet for every assistant response.
  */
 
 import { useMemo, useState, useEffect, useRef } from 'react';
@@ -29,34 +31,21 @@ import {
 } from '@workspace/api-client-react';
 import { NeuralCore, type CoreState } from '@/components/jarvis/neural-core';
 import { Waveform } from '@/components/jarvis/waveform';
-import { ChatSheet } from '@/components/jarvis/chat-sheet';
+import { ChatSheet, type Message } from '@/components/jarvis/chat-sheet';
 import { SystemSheet } from '@/components/jarvis/system-sheet';
-
-// ---- Types ----
-
-type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  body: string;
-  providerName?: string;
-  time: string;
-};
-
-const formatTime = () =>
-  new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
 
 // ---- State chip config ----
 
 const STATE_META: Record<CoreState, { label: string; color: string; dim: string }> = {
-  idle:      { label: 'Standby',         color: '#0099dd', dim: 'rgba(0,153,221,0.15)' },
-  listening: { label: 'Listening',       color: '#00aaff', dim: 'rgba(0,170,255,0.15)' },
-  thinking:  { label: 'Processing',      color: '#00ddff', dim: 'rgba(0,220,255,0.15)' },
-  speaking:  { label: 'Responding',      color: '#00ffcc', dim: 'rgba(0,255,200,0.15)' },
-  offline:   { label: 'Offline',         color: '#335566', dim: 'rgba(30,50,70,0.3)'   },
-  alert:     { label: 'Alert',           color: '#ff7700', dim: 'rgba(255,100,0,0.15)' },
+  idle:      { label: 'Standby',    color: '#0099dd', dim: 'rgba(0,153,221,0.15)' },
+  listening: { label: 'Listening',  color: '#00aaff', dim: 'rgba(0,170,255,0.15)' },
+  thinking:  { label: 'Processing', color: '#00ddff', dim: 'rgba(0,220,255,0.15)' },
+  speaking:  { label: 'Responding', color: '#00ffcc', dim: 'rgba(0,255,200,0.15)' },
+  offline:   { label: 'Offline',    color: '#335566', dim: 'rgba(30,50,70,0.3)'   },
+  alert:     { label: 'Alert',      color: '#ff7700', dim: 'rgba(255,100,0,0.15)' },
 };
 
-// ---- Status text ----
+// ---- Status text derivation ----
 
 function deriveStatus(
   connected: boolean | undefined,
@@ -67,13 +56,13 @@ function deriveStatus(
   hasResponse: boolean,
   isLoading: boolean,
 ): { line1: string; line2: string | null } {
-  if (isLoading) return { line1: 'Connecting to runtime…', line2: null };
-  if (!connected) return { line1: 'Runtime unreachable', line2: 'Start the local JARVIS process' };
-  if (demoMode) return { line1: 'DEMO MODE', line2: 'Scripted responses — no real AI connected' };
-  if (!providerConfigured) return { line1: 'No provider configured', line2: 'Connect a local model to activate' };
-  if (pending) return { line1: 'Processing goal…', line2: providerName ?? null };
-  if (hasResponse) return { line1: 'Ready', line2: providerName ?? null };
-  return { line1: 'Ready', line2: providerName ?? null };
+  if (isLoading)            return { line1: 'Connecting to runtime…', line2: null };
+  if (!connected)           return { line1: 'Runtime unreachable',    line2: 'Start the local JARVIS process' };
+  if (demoMode)             return { line1: 'DEMO MODE',              line2: 'Scripted responses — no real AI connected' };
+  if (!providerConfigured)  return { line1: 'No provider configured', line2: 'Connect a local model to activate' };
+  if (pending)              return { line1: 'Processing goal…',       line2: providerName ?? null };
+  if (hasResponse)          return { line1: 'Ready',                  line2: providerName ?? null };
+  return                           { line1: 'Ready',                  line2: providerName ?? null };
 }
 
 function deriveCoreState(
@@ -83,17 +72,16 @@ function deriveCoreState(
   speakingFor: boolean,
   demoMode: boolean,
   isLoading: boolean,
-  hasAlerts: boolean,
 ): CoreState {
-  // Runtime itself unreachable → dead core
-  if (isLoading || !connected) return 'offline';
-  if (hasAlerts) return 'alert';
-  // Runtime reachable but no AI brain → gentle idle pulse (the system lives, just no mind)
-  if (!providerConfigured && !demoMode) return 'idle';
-  if (pending) return 'thinking';
-  if (speakingFor) return 'speaking';
+  if (isLoading || !connected)           return 'offline';
+  if (!providerConfigured && !demoMode)  return 'idle';  // runtime alive, no brain
+  if (pending)                           return 'thinking';
+  if (speakingFor)                       return 'speaking';
   return 'idle';
 }
+
+const formatTime = () =>
+  new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
 
 // ---- Component ----
 
@@ -113,7 +101,6 @@ export default function Home() {
       refetchOnWindowFocus: true,
     },
   });
-
   const health = useHealthCheck({
     query: {
       queryKey: getHealthCheckQueryKey(),
@@ -121,17 +108,12 @@ export default function Home() {
       refetchOnWindowFocus: true,
     },
   });
-
   const sendMessage = useSendJarvisMessage();
   const runtime = status.data;
 
-  // Detect demo mode from provider name
+  // Detect demo mode from the provider name returned by the backend
   useEffect(() => {
-    if (runtime?.providerName?.toLowerCase().includes('demo')) {
-      setDemoMode(true);
-    } else {
-      setDemoMode(false);
-    }
+    setDemoMode(runtime?.providerName?.toLowerCase() === 'demo');
   }, [runtime?.providerName]);
 
   const sendError = useMemo(() => {
@@ -147,7 +129,6 @@ export default function Home() {
     speakingFor,
     demoMode,
     status.isLoading && !runtime,
-    false, // alert: reserved for security state from /jarvis/system
   );
 
   const statusText = deriveStatus(
@@ -166,13 +147,29 @@ export default function Home() {
     const trimmed = goal.trim();
     if (!trimmed || !ready || sendMessage.isPending) return;
     const sentAt = formatTime();
-    setMessages((cur) => [...cur, { id: `u-${Date.now()}`, role: 'user', body: trimmed, time: sentAt }]);
+    setMessages((cur) => [
+      ...cur,
+      { id: `u-${Date.now()}`, role: 'user', body: trimmed, time: sentAt },
+    ]);
     setGoal('');
+
     sendMessage.mutate({ data: { goal: trimmed } }, {
       onSuccess: (result) => {
         setMessages((cur) => [
           ...cur,
-          { id: `a-${Date.now()}`, role: 'assistant', body: result.response, providerName: result.providerName, time: formatTime() },
+          {
+            id: `a-${Date.now()}`,
+            role: 'assistant',
+            body: result.response,
+            providerName: result.providerName,
+            time: formatTime(),
+            // Structured execution trace (new fields from extended API)
+            demoMode: result.demoMode ?? false,
+            demoLabel: result.demoLabel ?? null,
+            executionSteps: result.executionSteps ?? [],
+            planGoal: result.planGoal ?? null,
+            failure: result.failure ?? null,
+          },
         ]);
         setSpeakingFor(true);
         if (speakingTimer.current) clearTimeout(speakingTimer.current);
@@ -182,9 +179,6 @@ export default function Home() {
   };
 
   const meta = STATE_META[coreState];
-
-  // Dynamic core size: fill the screen between top bar and bottom nav
-  // We use a CSS variable approach; the canvas is square, sized to min(vw, available-vh)
   const coreSize = 320;
 
   return (
@@ -192,9 +186,7 @@ export default function Home() {
       className="jarvis-cinematic relative flex min-h-[100dvh] flex-col overflow-hidden select-none"
       style={{ background: '#000408' }}
     >
-      {/* ---------------------------------------------------------------- */}
-      {/* Star field background */}
-      {/* ---------------------------------------------------------------- */}
+      {/* Background radial gradient */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0"
@@ -204,15 +196,12 @@ export default function Home() {
         }}
       />
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Top bar */}
-      {/* ---------------------------------------------------------------- */}
+      {/* ── Top bar ── */}
       <header
         className="relative z-10 flex items-center justify-between px-5"
         style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: '0.75rem' }}
       >
         <div className="flex items-center gap-3">
-          {/* J· logo mark */}
           <div
             className="flex size-9 items-center justify-center rounded-[11px] font-mono text-[14px] font-bold"
             style={{
@@ -225,10 +214,7 @@ export default function Home() {
             J·
           </div>
           <div>
-            <p
-              className="font-mono text-[9px] uppercase tracking-[0.22em]"
-              style={{ color: 'rgba(0,160,255,0.45)' }}
-            >
+            <p className="font-mono text-[9px] uppercase tracking-[0.22em]" style={{ color: 'rgba(0,160,255,0.45)' }}>
               Local system
             </p>
             <p className="text-[16px] font-semibold tracking-[-0.04em]" style={{ color: 'rgba(255,255,255,0.9)' }}>
@@ -236,16 +222,13 @@ export default function Home() {
             </p>
           </div>
         </div>
-
         <div className="flex items-center gap-2">
-          {/* Version micro-badge */}
           <span
             className="rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.14em]"
             style={{ background: 'rgba(0,160,255,0.08)', color: 'rgba(0,160,255,0.4)', border: '1px solid rgba(0,160,255,0.12)' }}
           >
             {runtime?.version ?? 'v0.1'}
           </span>
-          {/* System status button */}
           <button
             type="button"
             onClick={() => setSysOpen(true)}
@@ -267,9 +250,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* State chip */}
-      {/* ---------------------------------------------------------------- */}
+      {/* ── State chip ── */}
       <div className="relative z-10 flex justify-center py-1.5">
         <div
           className="flex items-center gap-2 rounded-full px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.15em]"
@@ -294,11 +275,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Neural core — the hero element */}
-      {/* ---------------------------------------------------------------- */}
+      {/* ── Neural core ── */}
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center py-2">
-        {/* Outer glow ring behind canvas */}
         <div
           aria-hidden
           className="pointer-events-none absolute rounded-full"
@@ -309,8 +287,6 @@ export default function Home() {
             boxShadow: `0 0 120px 20px ${meta.color}08`,
           }}
         />
-
-        {/* Canvas core */}
         <div className="relative" data-testid="neural-core-container">
           <NeuralCore state={coreState} size={coreSize} />
         </div>
@@ -320,7 +296,9 @@ export default function Home() {
           <p
             className="text-[15px] font-medium tracking-[-0.02em]"
             style={{
-              color: coreState === 'offline' ? 'rgba(80,120,160,0.7)' : demoMode ? 'rgba(255,180,0,0.85)' : 'rgba(255,255,255,0.85)',
+              color: coreState === 'offline' ? 'rgba(80,120,160,0.7)'
+                   : demoMode ? 'rgba(255,180,0,0.85)'
+                   : 'rgba(255,255,255,0.85)',
             }}
             data-testid="text-status-line1"
           >
@@ -343,14 +321,10 @@ export default function Home() {
         </div>
       </main>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Network indicator strip */}
-      {/* ---------------------------------------------------------------- */}
+      {/* ── Network strip ── */}
       <div className="relative z-10 flex justify-center pb-2">
         <div className="flex items-center gap-2" style={{ color: 'rgba(0,160,255,0.28)' }}>
-          {runtime?.connected
-            ? <Wifi size={11} />
-            : <WifiOff size={11} />}
+          {runtime?.connected ? <Wifi size={11} /> : <WifiOff size={11} />}
           <span className="font-mono text-[8px] uppercase tracking-[0.14em]">
             {runtime?.connected ? 'Runtime reachable' : 'Runtime unreachable'}
           </span>
@@ -362,9 +336,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Bottom action bar */}
-      {/* ---------------------------------------------------------------- */}
+      {/* ── Bottom nav ── */}
       <nav
         className="relative z-10 flex items-center justify-around px-6"
         style={{
@@ -374,7 +346,6 @@ export default function Home() {
           background: 'linear-gradient(to top, rgba(0,4,12,0.95), transparent)',
         }}
       >
-        {/* Chat */}
         <NavButton
           onClick={() => setChatOpen(true)}
           label="Chat"
@@ -399,15 +370,10 @@ export default function Home() {
                 ? `radial-gradient(circle at 40% 35%, ${meta.color}28, rgba(0,0,0,0.7))`
                 : 'rgba(30,40,50,0.7)',
               border: `2px solid ${ready ? meta.color + '55' : 'rgba(60,80,100,0.3)'}`,
-              boxShadow: ready
-                ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10`
-                : 'none',
+              boxShadow: ready ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10` : 'none',
             }}
           >
-            <Mic
-              size={26}
-              style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }}
-            />
+            <Mic size={26} style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }} />
           </div>
           <span
             className="font-mono text-[8px] uppercase tracking-[0.14em]"
@@ -417,7 +383,6 @@ export default function Home() {
           </span>
         </button>
 
-        {/* System */}
         <NavButton
           onClick={() => setSysOpen(true)}
           label="System"
@@ -426,25 +391,7 @@ export default function Home() {
         />
       </nav>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Sheets */}
-      {/* ---------------------------------------------------------------- */}
-      <ChatSheet
-        open={chatOpen}
-        onClose={() => setChatOpen(false)}
-        messages={messages}
-        goal={goal}
-        onGoalChange={setGoal}
-        onSend={handleSend}
-        disabled={!ready}
-        isPending={sendMessage.isPending}
-        sendError={sendError}
-      />
-      <SystemSheet open={sysOpen} onClose={() => setSysOpen(false)} />
-
-      {/* ---------------------------------------------------------------- */}
-      {/* DEMO MODE banner overlay (bottom, above nav) */}
-      {/* ---------------------------------------------------------------- */}
+      {/* ── Demo MODE banner ── */}
       {demoMode && (
         <div
           className="pointer-events-none absolute bottom-[100px] left-0 right-0 z-20 flex justify-center"
@@ -467,6 +414,20 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* ── Sheets ── */}
+      <ChatSheet
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        messages={messages}
+        goal={goal}
+        onGoalChange={setGoal}
+        onSend={handleSend}
+        disabled={!ready}
+        isPending={sendMessage.isPending}
+        sendError={sendError}
+      />
+      <SystemSheet open={sysOpen} onClose={() => setSysOpen(false)} />
     </div>
   );
 }

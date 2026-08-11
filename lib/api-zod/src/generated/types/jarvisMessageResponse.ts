@@ -5,10 +5,21 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { JarvisExecutionStep } from './jarvisExecutionStep';
 
 export interface JarvisMessageResponse {
   success: boolean;
   goal: string;
   response: string;
   providerName: string;
+  demoMode: boolean;
+  /** @nullable */
+  demoLabel: string | null;
+  /** @nullable */
+  planGoal: string | null;
+  /** @nullable */
+  planProvider: string | null;
+  executionSteps: JarvisExecutionStep[];
+  /** @nullable */
+  failure: string | null;
 }

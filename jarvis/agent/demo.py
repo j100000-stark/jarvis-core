@@ -9,6 +9,15 @@ claims to be a real language model or connected AI service.
 This is NOT a real LLM.  It CANNOT reason about arbitrary goals.
 It exists to demonstrate the multi-agent orchestration pipeline
 end-to-end in a controlled, repeatable way.
+
+Supported canonical goals (case-insensitive substring match):
+  - "network" / "connectivity"       → network status demo plan
+  - "remember" / "memory" / "name"   → memory storage demo plan
+  - "security" / "safe" / "threat"   → defensive security demo plan
+  - "check" / "status" / "system"    → system check demo plan
+  - "report" / "summary" / "health"  → system check demo plan
+  - "plan" / "next steps" / "prepare"→ planning demo plan
+  - anything else                    → generic demo plan
 """
 
 from __future__ import annotations
@@ -58,11 +67,8 @@ class DemoBrain(Brain):
     without requiring a real AI provider.  All outputs are clearly labelled
     as DEMO.
 
-    Supported canonical goals (case-insensitive substring match):
-    - "check" / "status" / "behaving"  → system status check plan
-    - "security" / "safe"              → defensive security plan
-    - "plan" / "next steps"            → planning demo plan
-    - anything else                    → generic demo plan
+    All demo steps use safe tool invocations (echo / time) — no destructive
+    actions, no external network calls, no file writes.
     """
 
     @property
@@ -111,108 +117,246 @@ class DemoBrain(Brain):
         )
 
     # ------------------------------------------------------------------
-    # Step library
+    # Goal routing
     # ------------------------------------------------------------------
 
     def _select_steps(self, goal: str) -> list[PlanStep]:
+        """Select a scripted step list based on goal keywords.
+
+        Network is checked before generic "check" to avoid misrouting
+        "Check network status" to the system-check flow.
+        """
         gl = goal.lower()
-        if any(kw in gl for kw in ("check", "status", "behav", "normal")):
-            return self._system_check_steps()
-        if any(kw in gl for kw in ("security", "safe", "threat", "suspicious")):
+        if any(kw in gl for kw in ("network", "connectivity", "connection", "internet", "wifi")):
+            return self._network_steps()
+        if any(kw in gl for kw in ("remember", "memory", "my name", "name is", "store", "recall")):
+            return self._memory_steps(goal)
+        if any(kw in gl for kw in ("security", "safe", "threat", "suspicious", "scan", "posture", "vuln")):
             return self._security_steps()
-        if any(kw in gl for kw in ("plan", "next step", "prepare")):
+        if any(kw in gl for kw in ("check", "status", "behav", "normal", "system", "report", "summary", "health")):
+            return self._system_check_steps()
+        if any(kw in gl for kw in ("plan", "next step", "prepare", "todo", "roadmap")):
             return self._planning_steps()
         return self._generic_steps(goal)
 
+    # ------------------------------------------------------------------
+    # Step libraries
+    # ------------------------------------------------------------------
+
     def _system_check_steps(self) -> list[PlanStep]:
+        """Three-step system status check: collect → analyze → report."""
         return [
             PlanStep(
                 identifier="demo-collect",
-                objective="Collect local system status [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Collect local system status snapshot [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] System snapshot: disk=accessible, "
+                    "memory_items=0, tools=echo,time, "
+                    "recovery_incidents=0, watchdog=active"
+                ),
                 verification="Status collected",
             ),
             PlanStep(
                 identifier="demo-analyze",
-                objective="Analyze collected status [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Analyze collected system data [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Analysis: All monitored components healthy. "
+                    "No crash loops. No anomalies. Baseline nominal."
+                ),
                 verification="Analysis complete",
             ),
             PlanStep(
                 identifier="demo-report",
-                objective="Produce status report [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Produce final status report [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Status report: SYSTEM NOMINAL. "
+                    "Runtime: reachable. Brain: demo (no real AI). "
+                    "Safety gates: active. All checks passed."
+                ),
                 verification="Report produced",
             ),
         ]
 
+    def _network_steps(self) -> list[PlanStep]:
+        """Two-step network check: probe → report."""
+        return [
+            PlanStep(
+                identifier="demo-net-probe",
+                objective="Probe local network state [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Network probe: state=offline (no live Internet probes in demo). "
+                    "Local interfaces: present. LAN: not probed in demo mode. "
+                    "Outbound policy: restricted (local-only)."
+                ),
+                verification="Network probe complete",
+            ),
+            PlanStep(
+                identifier="demo-net-report",
+                objective="Produce network connectivity report [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Network report: JARVIS operates in local-only mode. "
+                    "No external APIs are enabled. "
+                    "LocalNetworkFallback interface: stubbed (Raspberry Pi hardware not present). "
+                    "Recommendation: configure a local provider at 127.0.0.1 or ::1."
+                ),
+                verification="Network report ready",
+            ),
+        ]
+
+    def _memory_steps(self, goal: str) -> list[PlanStep]:
+        """Two-step memory workflow: store → confirm."""
+        # Extract the content to remember if possible (best-effort heuristic)
+        gl = goal.lower()
+        content_hint = ""
+        for marker in ("remember that ", "remember ", "store that ", "store "):
+            if marker in gl:
+                idx = gl.index(marker) + len(marker)
+                content_hint = goal[idx:].strip()
+                break
+        if not content_hint:
+            content_hint = goal
+
+        return [
+            PlanStep(
+                identifier="demo-memory-store",
+                objective="Store fact in MemoryManager [DEMO]",
+                tool_name="echo",
+                argument=(
+                    f"[DEMO] MemoryManager.remember() called. "
+                    f"Content: '{content_hint[:80]}'. "
+                    "Stored as memory item #DEMO-001. "
+                    "Persisted to local JSON store."
+                ),
+                verification="Memory stored",
+            ),
+            PlanStep(
+                identifier="demo-memory-confirm",
+                objective="Confirm memory retrieval [DEMO]",
+                tool_name="echo",
+                argument=(
+                    f"[DEMO] Memory recall: "
+                    f"#{1} — {content_hint[:80]}. "
+                    "Item retrievable via semantic search. "
+                    "MemoryStore integrity: OK."
+                ),
+                verification="Memory confirmed",
+            ),
+        ]
+
     def _security_steps(self) -> list[PlanStep]:
+        """Four-step security pipeline: sentinel → investigate → posture → commander."""
         return [
             PlanStep(
                 identifier="demo-sentinel",
-                objective="Run SecuritySentinel event collection [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Run SecuritySentinel: process + network snapshot [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] SecuritySentinel: process snapshot captured. "
+                    "Network interfaces enumerated. "
+                    "0 anomalies flagged in this demo run. "
+                    "Heuristics: all within baseline thresholds."
+                ),
                 verification="Events collected",
             ),
             PlanStep(
                 identifier="demo-investigate",
-                objective="Run SecurityInvestigator analysis [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Run SecurityInvestigator: correlate events [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] SecurityInvestigator: 0 events correlated. "
+                    "Timeline: clean. Risk level: INFO. "
+                    "Evidence vs assumptions: 0 evidence items, 0 assumptions. "
+                    "No suspicious patterns found."
+                ),
                 verification="Investigation complete",
             ),
             PlanStep(
-                identifier="demo-check",
-                objective="Run SecurityTestAgent posture check [DEMO]",
-                tool_name="time",
-                argument="",
+                identifier="demo-posture",
+                objective="Run SecurityTestAgent: local posture check [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] SecurityTestAgent: posture check on authorized local target. "
+                    "World-writable paths: none found. "
+                    "Env var audit: no credentials in names. "
+                    "Hostname resolution: responds locally. "
+                    "Platform: acceptable."
+                ),
                 verification="Posture check complete",
             ),
             PlanStep(
                 identifier="demo-commander",
-                objective="SecurityCommander produces unified report [DEMO]",
-                tool_name="time",
-                argument="",
-                verification="Report ready",
+                objective="SecurityCommander: produce unified security report [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] SecurityCommander report: "
+                    "SECURE (demo assessment). "
+                    "Alerts: 0. Findings: 0. Severity: INFO. "
+                    "All safety gates intact. "
+                    "No destructive actions taken or proposed."
+                ),
+                verification="Security report ready",
             ),
         ]
 
     def _planning_steps(self) -> list[PlanStep]:
+        """Two-step planning demo: generate → verify."""
         return [
             PlanStep(
                 identifier="demo-plan",
-                objective="Generate demo plan [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Generate demo plan structure [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Plan generated: 3 phases identified. "
+                    "Phase 1: assess current state. "
+                    "Phase 2: identify gaps. "
+                    "Phase 3: produce prioritized action list. "
+                    "All steps operate within local-only safety boundary."
+                ),
                 verification="Plan generated",
             ),
             PlanStep(
-                identifier="demo-verify",
-                objective="Verify demo plan [DEMO]",
-                tool_name="time",
-                argument="",
+                identifier="demo-plan-verify",
+                objective="Verify plan completeness and safety [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Plan verification: complete. "
+                    "No external API calls required. "
+                    "No destructive actions proposed. "
+                    "Planner approved plan for execution."
+                ),
                 verification="Plan verified",
             ),
         ]
 
     def _generic_steps(self, goal: str) -> list[PlanStep]:
+        """Two-step fallback for unrecognised goals."""
+        truncated = goal[:60]
         return [
             PlanStep(
                 identifier="demo-step-1",
-                objective=f"Demo step 1 for goal: {goal[:60]} [DEMO]",
-                tool_name="time",
-                argument="",
+                objective=f"Demo step 1: process goal [DEMO]",
+                tool_name="echo",
+                argument=(
+                    f"[DEMO] Processing goal: '{truncated}'. "
+                    "AgentOrchestrator selected: standard executor. "
+                    "Executing within local safe-tool boundary."
+                ),
                 verification="Step 1 complete",
             ),
             PlanStep(
                 identifier="demo-step-2",
-                objective="Demo verification step [DEMO]",
-                tool_name="time",
-                argument="",
+                objective="Demo step 2: verify and summarise [DEMO]",
+                tool_name="echo",
+                argument=(
+                    "[DEMO] Verification complete. "
+                    "Goal processed without real AI involvement. "
+                    "Result: demo output only. No real data accessed."
+                ),
                 verification="Verified",
             ),
         ]

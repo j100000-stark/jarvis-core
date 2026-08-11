@@ -8,7 +8,7 @@ import {
 import {
   getJarvisStatus,
   getJarvisSystemReport,
-  sendJarvisGoal,
+  sendJarvisGoalJson,
 } from "../lib/jarvis-runtime";
 
 const router: IRouter = Router();
@@ -23,7 +23,6 @@ router.get("/jarvis/status", (req, res): void => {
     });
     return;
   }
-
   res.json(GetJarvisStatusResponse.parse(status));
 });
 
@@ -31,22 +30,16 @@ router.post("/jarvis/messages", (req, res): void => {
   const parsed = SendJarvisMessageBody.safeParse(req.body);
   if (!parsed.success) {
     req.log.warn({ errors: parsed.error.message }, "Invalid JARVIS goal");
-    res.status(400).json({
-      error: parsed.error.message,
-      code: "INVALID_GOAL",
-    });
+    res.status(400).json({ error: parsed.error.message, code: "INVALID_GOAL" });
     return;
   }
 
-  const result = sendJarvisGoal(parsed.data.goal.trim());
+  const result = sendJarvisGoalJson(parsed.data.goal.trim());
   if ("kind" in result) {
-    const statusCode = result.kind === "brain_unavailable" ? 503 : 503;
     const code =
-      result.kind === "brain_unavailable"
-        ? "BRAIN_UNAVAILABLE"
-        : "RUNTIME_UNAVAILABLE";
+      result.kind === "brain_unavailable" ? "BRAIN_UNAVAILABLE" : "RUNTIME_UNAVAILABLE";
     req.log.warn({ code }, "JARVIS goal could not be processed");
-    res.status(statusCode).json({ error: result.error, code });
+    res.status(503).json({ error: result.error, code });
     return;
   }
 
@@ -57,10 +50,7 @@ router.get("/jarvis/system", (req, res): void => {
   const report = getJarvisSystemReport();
   if ("error" in report) {
     req.log.warn({ error: report.error }, "JARVIS system report unavailable");
-    res.status(503).json({
-      error: report.error,
-      code: "RUNTIME_UNAVAILABLE",
-    });
+    res.status(503).json({ error: report.error, code: "RUNTIME_UNAVAILABLE" });
     return;
   }
   res.json(GetJarvisSystemResponse.parse(report));

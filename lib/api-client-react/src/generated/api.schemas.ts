@@ -27,11 +27,32 @@ export interface JarvisMessageInput {
   goal: string;
 }
 
+export interface JarvisExecutionStep {
+  stepId: string;
+  objective: string;
+  tool: string;
+  output: string;
+  /** @nullable */
+  error: string | null;
+  verified: boolean;
+  verification: string;
+}
+
 export interface JarvisMessageResponse {
   success: boolean;
   goal: string;
   response: string;
   providerName: string;
+  demoMode: boolean;
+  /** @nullable */
+  demoLabel: string | null;
+  /** @nullable */
+  planGoal: string | null;
+  /** @nullable */
+  planProvider: string | null;
+  executionSteps: JarvisExecutionStep[];
+  /** @nullable */
+  failure: string | null;
 }
 
 export interface JarvisError {
