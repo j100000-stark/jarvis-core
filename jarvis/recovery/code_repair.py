@@ -34,7 +34,6 @@ from __future__ import annotations
 import ast
 import json
 import os
-import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -52,12 +51,8 @@ _FORBIDDEN_PARTS = {".env", "secrets", ".git"}
 
 def _sanitize(text: str) -> str:
     """Redact anything that looks like a secret/token before persistence."""
-    try:
-        from ..diagnostics import _redact_env_values  # type: ignore[attr-defined]
-        text = _redact_env_values(text)
-    except Exception:
-        pass
-    return re.sub(r"[A-Za-z0-9_\-]{32,}", "[REDACTED]", text)
+    from .redaction import sanitize_text
+    return sanitize_text(text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +84,7 @@ class CodeRepairPipeline:
         project_root: Path,
         data_dir: Path,
         generator: PatchGenerator | None = None,
+        use_llm_generator: bool = False,
         allowed_roots: tuple[str, ...] = ("jarvis",),
         test_command: tuple[str, ...] | None = None,
         provider: str | None = None,
@@ -97,6 +93,9 @@ class CodeRepairPipeline:
         self._root = project_root.resolve()
         self._data_dir = data_dir
         self._generator = generator
+        # Opt-in: only reach for the configured repair LLM when explicitly
+        # requested — never silently contact a provider.
+        self._use_llm_generator = use_llm_generator
         self._allowed_roots = allowed_roots
         self._test_command = test_command
         # Dedicated repair model config — NEVER the primary reasoning model.
@@ -136,26 +135,38 @@ class CodeRepairPipeline:
 
         # ── Generate proposed patch ────────────────────────────────────────
         stages.append("GENERATE_PATCH")
-        if self._generator is None:
+        generator = self._generator
+        if generator is None and self._use_llm_generator:
+            # Try the configured repair LLM (REPAIR_LLM_PROVIDER/MODEL).
+            from .repair_generator import build_repair_generator
+            generator = build_repair_generator()
+        if generator is None:
             return self._finish(
                 success=False, dry_run=dry_run, applied=False, diagnosis=diagnosis,
                 files=tuple(files), patch={}, validation_errors=(
-                    "No repair model generator configured "
+                    "REPAIR_GENERATOR UNAVAILABLE: no repair model configured "
                     f"(provider={self._provider or 'unset'}, model={self._model or 'unset'}).",
                 ),
                 tests=(), test_results="", stages=tuple(stages),
-                message="No repair model configured — nothing was changed.",
+                message="REPAIR_GENERATOR UNAVAILABLE — nothing was changed.",
             )
         try:
-            proposal = self._generator(diagnosis, files)
+            proposal = generator(diagnosis, files)
         except Exception as exc:  # noqa: BLE001 — must never crash the host
+            from .repair_generator import RepairGeneratorUnavailable
+            unavailable = isinstance(exc, RepairGeneratorUnavailable)
+            detail = _sanitize(str(exc))[:200] if unavailable else type(exc).__name__
             return self._finish(
                 success=False, dry_run=dry_run, applied=False, diagnosis=diagnosis,
                 files=tuple(files), patch={}, validation_errors=(
-                    f"Patch generation failed: {type(exc).__name__}",
+                    detail if unavailable else f"Patch generation failed: {detail}",
                 ),
                 tests=(), test_results="", stages=tuple(stages),
-                message="Repair model failed to produce a patch — nothing was changed.",
+                message=(
+                    "REPAIR_GENERATOR UNAVAILABLE — nothing was changed."
+                    if unavailable
+                    else "Repair model failed to produce a valid patch — nothing was changed."
+                ),
             )
 
         # ── Validate patch BEFORE any disk write ───────────────────────────
@@ -167,6 +178,16 @@ class CodeRepairPipeline:
             if rel not in files:
                 validation_errors.append(
                     f"Patch touches file outside the identified set: {rel}"
+                )
+        # Fail closed if generated content echoes a live environment secret —
+        # never write such a patch to disk or expose it in reports.
+        from .redaction import contains_env_secret
+        for rel, content in proposal.items():
+            leaked = contains_env_secret(content)
+            if leaked:
+                validation_errors.append(
+                    f"Patch for {rel} contains the value of environment "
+                    f"variable '{leaked}' — rejected."
                 )
         if validation_errors:
             return self._finish(

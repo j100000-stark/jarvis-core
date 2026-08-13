@@ -1,0 +1,69 @@
+Continue from the current completed state.
+
+Do NOT redo the existing work.
+
+The system already has the safe AI code-repair infrastructure, but the final report says:
+
+"No generator is wired yet, so it honestly refuses rather than pretending."
+
+Now implement the missing repair-generator layer.
+
+Use a separate configurable repair LLM provider/model for CODE REPAIR ONLY.
+
+Architecture:
+
+failure
+→ diagnosis
+→ identify affected files
+→ collect relevant source context
+→ generate proposed patch with repair LLM
+→ validate patch
+→ run AST/JSON/syntax validation
+→ run tests/type checks
+→ apply only if validation succeeds
+→ restart affected service
+→ runtime verification
+→ retry original operation
+→ record complete incident
+
+Requirements:
+
+1. Keep the existing allowlist and path/symlink containment.
+2. Never allow the repair model to write arbitrary files.
+3. Never expose environment variables, API keys, tokens, or secrets to the repair model.
+4. Give the repair model only the minimum source context required.
+5. Support REPAIR_LLM_PROVIDER and REPAIR_LLM_MODEL.
+6. Keep the repair model completely separate from the normal JARVIS reasoning model.
+7. Keep REPAIR_DRY_RUN working.
+8. Generate a structured repair proposal before applying anything.
+9. A repair must NEVER be considered successful only because the LLM generated code.
+10. Tests or runtime verification must gate the actual application.
+11. Preserve rollback using the existing disk snapshot system.
+12. Sanitize all repair logs and model responses.
+13. Add tests for:
+    - successful generated repair
+    - invalid patch
+    - unauthorized file
+    - path traversal
+    - secret leakage
+    - failed tests
+    - rollback
+    - dry-run
+    - provider unavailable
+    - model unavailable
+
+If the configured repair provider is unavailable, report:
+
+REPAIR_GENERATOR UNAVAILABLE
+
+instead of pretending that repair was performed.
+
+Then run:
+
+- complete Python test suite
+- TypeScript checks
+- integration tests
+- runtime verification
+- restart workflows
+
+Only after this is genuinely working should we move to the final FULL SYSTEM AUDIT + REPAIR + MISSING COMPONENT IMPLEMENTATION.
