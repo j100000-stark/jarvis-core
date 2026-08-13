@@ -49,13 +49,18 @@ function sanitize(text: string): string {
     .replace(/\b[A-Za-z0-9]{32,}\b/g, "[REDACTED]");
 }
 
-/** Map an upstream HTTP status + body to a structured failure category. */
+/** Map an upstream HTTP status + body to a structured failure category.
+ *  Full classification (spec): 401 auth, 402 quota/billing, 403 forbidden,
+ *  404 voice/endpoint, 422 invalid request, 429 rate limit, 5xx server. */
 function categorizeUpstream(statusCode: number, body: string): string {
-  if (statusCode === 401 || statusCode === 403) return "TTS_AUTH_FAILED";
-  if (statusCode === 404) return "TTS_VOICE_NOT_FOUND";
+  if (statusCode === 401) return "TTS_AUTH_FAILED";
+  if (statusCode === 402) return "TTS_QUOTA_OR_BILLING";
+  if (statusCode === 403) return "TTS_FORBIDDEN";
+  if (statusCode === 404) return "TTS_VOICE_OR_ENDPOINT_NOT_FOUND";
   if (statusCode === 400 && /model/i.test(body)) return "TTS_MODEL_INVALID";
-  if (statusCode === 422 && /voice/i.test(body)) return "TTS_VOICE_NOT_FOUND";
-  if (statusCode === 422 && /model/i.test(body)) return "TTS_MODEL_INVALID";
+  if (statusCode === 422) return "TTS_INVALID_REQUEST"; // spec: 422 unconditional
+  if (statusCode === 429) return "TTS_RATE_LIMITED";
+  if (statusCode >= 500) return "TTS_UPSTREAM_SERVER_ERROR";
   return "TTS_UPSTREAM_ERROR";
 }
 
@@ -254,13 +259,20 @@ router.get("/tts/health", (req, res): void => {
     res.status(200).json({ ...healthCache.body, cached: true });
     return;
   }
+  // Safe metadata only — never the values themselves.
+  const configMeta = {
+    apiKey: process.env.ELEVENLABS_API_KEY ? "PRESENT" : "MISSING",
+    voiceId: process.env.ELEVENLABS_VOICE_ID ? "PRESENT" : "MISSING",
+    model: process.env.ELEVENLABS_MODEL ?? DEFAULT_MODEL,
+  };
+
   const cfg = readConfig();
   if (!cfg.ok) {
     res.status(200).json({
       ready: false,
       category: cfg.category,
       error: cfg.error,
-      model: process.env.ELEVENLABS_MODEL ?? DEFAULT_MODEL,
+      ...configMeta,
     });
     return;
   }
@@ -297,7 +309,7 @@ router.get("/tts/health", (req, res): void => {
           });
           return;
         }
-        settle({ ready: true, audioBytes, model: cfg.config.modelId });
+        settle({ ready: true, audioBytes, ...configMeta });
       });
       stream.on("error", (err: Error) => {
         settle({
@@ -313,7 +325,8 @@ router.get("/tts/health", (req, res): void => {
         ready: false,
         category: failure.category,
         error: failure.error,
-        model: cfg.config.modelId,
+        statusCode: failure.statusCode ?? null,
+        ...configMeta,
       });
     },
   );

@@ -248,6 +248,8 @@ export default function Home() {
   }, []);
 
   // ── Wake word — primary hands-free activation (spec Phase 2) ──────────────
+  // "WAKE WORD ACTIVE" is only shown after the recognition engine's real
+  // onstart event ('listening' status) — never merely because start() ran.
   const wakeWord = useWakeWord({
     enabled:
       ready &&
@@ -256,21 +258,35 @@ export default function Home() {
       !sendMessage.isPending &&
       !chatOpen,
     onWake: useCallback((command: string) => {
-      pushLine('WAKE WORD', 'DETECTED', 'success');
       if (command) {
         // Wake phrase carried a command ("Jarvis, che ore sono?") — submit it.
+        pushLine('LISTENING', 'ACTIVE', 'info');
         lastTranscriptRef.current = command;
         setGoal(command);
       } else {
         // Bare wake word — open the mic for the command.
+        pushLine('LISTENING', 'ACTIVE', 'info');
         voice.startListening();
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pushLine]),
     onStatusChange: useCallback((status: string) => {
-      if (status === 'listening')   pushLine('WAKE WORD', 'ACTIVE — SAY "JARVIS"', 'info');
-      if (status === 'restricted')  pushLine('WAKE WORD', 'UNAVAILABLE — USE MIC BUTTON', 'warning');
+      if (status === 'listening')   pushLine('WAKE WORD', 'ACTIVE — SAY "JARVIS"', 'success');
+      if (status === 'paused')      pushLine('WAKE WORD', 'PAUSED — TAP MIC TO REACTIVATE', 'warning');
       if (status === 'unsupported') pushLine('WAKE WORD', 'UNSUPPORTED — USE MIC BUTTON', 'warning');
+    }, [pushLine]),
+    onLifecycle: useCallback((event: string, detail?: string) => {
+      // Real engine lifecycle — the terminal never simulates these.
+      switch (event) {
+        case 'RECOGNITION_CREATED': pushLine('RECOGNITION', 'CREATED', 'normal'); break;
+        case 'RECOGNITION_STARTED': pushLine('RECOGNITION', 'STARTED', 'info'); break;
+        case 'RECOGNITION_RESULT':  pushLine('RECOGNITION', 'RESULT', 'normal'); break;
+        case 'RECOGNITION_ERROR':   pushLine('RECOGNITION', `ERROR ${detail ?? ''}`.trim().toUpperCase().slice(0, 40), 'warning'); break;
+        case 'RECOGNITION_END':     pushLine('WAKE WORD', 'INTERRUPTED', 'normal'); break;
+        case 'RECOGNITION_RESTART': pushLine('RECOGNITION', 'RESTARTING', 'normal'); break;
+        case 'WAKE_WORD_DETECTED':  pushLine('WAKE WORD', 'DETECTED', 'success'); break;
+        default: break;
+      }
     }, [pushLine]),
   });
 
@@ -309,17 +325,32 @@ export default function Home() {
         pushLine('PROVIDER', 'NONE',        'warning');
       }
     });
-    // ELEVENLABS status is verified with a REAL synthesis test — never faked.
+    // ELEVENLABS + VOICE status verified with a REAL synthesis test — never
+    // faked. VOICE READY means a real synthesis SUCCEEDED, not "config exists".
     delay(600, () => {
+      pushLine('ELEVENLABS', 'TESTING SYNTHESIS', 'normal');
       fetch('/api/tts/health')
         .then((r) => r.json())
-        .then((h: { ready?: boolean; category?: string }) => {
-          if (h.ready) pushLine('ELEVENLABS', 'VERIFIED', 'success');
-          else pushLine('ELEVENLABS', h.category ?? 'UNAVAILABLE', 'error');
+        .then((h: {
+          ready?: boolean; category?: string; statusCode?: number | null;
+          apiKey?: string; voiceId?: string; model?: string;
+        }) => {
+          if (h.ready) {
+            pushLine('ELEVENLABS', 'VERIFIED — SYNTHESIS OK', 'success');
+            pushLine('VOICE', 'READY', 'success');
+          } else {
+            if (h.statusCode) pushLine('ELEVENLABS', `ERROR ${h.statusCode}`, 'error');
+            pushLine('TTS', (h.category ?? 'UNAVAILABLE').replace(/^TTS_/, ''), 'error');
+            if (h.apiKey === 'MISSING') pushLine('API KEY', 'MISSING', 'error');
+            if (h.voiceId === 'MISSING') pushLine('VOICE ID', 'MISSING', 'error');
+            pushLine('VOICE', 'BROWSER FALLBACK ONLY', 'warning');
+          }
         })
-        .catch(() => pushLine('ELEVENLABS', 'UNREACHABLE', 'error'));
+        .catch(() => {
+          pushLine('ELEVENLABS', 'UNREACHABLE', 'error');
+          pushLine('VOICE', 'BROWSER FALLBACK ONLY', 'warning');
+        });
     });
-    delay(720, () => pushLine('VOICE',      'READY',           'info'));
     delay(840, () => pushLine('WATCHDOG',   'ACTIVE',          'info'));
     delay(960, () => pushLine('TOOLS',      '11 REGISTERED',   'info'));
     delay(1080,() => pushLine('SYSTEM',     'NOMINAL',         'success'));
@@ -600,9 +631,13 @@ export default function Home() {
       // Unlock iOS AudioContext during this user gesture so the subsequent
       // async audio.play() call in speak() is permitted by Safari's autoplay policy.
       voice.unlockAudio();
+      // Synchronously release the wake-word mic (single-owner rule) and clear
+      // its failure budget; the wake loop re-arms via its enabled flag once
+      // voice returns to idle. Never start two recognizers in one gesture.
+      wakeWord.pause();
       voice.startListening();
     }
-  }, [voice, ready]);
+  }, [voice, ready, wakeWord]);
 
   // ── Last assistant message for response card ───────────────────────────────
   const lastAssistant = useMemo(() => {

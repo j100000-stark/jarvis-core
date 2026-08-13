@@ -186,6 +186,7 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
   // Accumulated STT state — lives at hook level so onend can access them.
   const accumulatedFinalRef = useRef(""); // final transcript pieces across onresult events
   const lastInterimRef      = useRef(""); // last interim (iOS fallback when no isFinal fires)
+  const silenceTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Duplicate-submission guard: never submit the same utterance twice in a row
   // within a short window (iOS can fire onend twice after Safari interruptions).
   const lastSubmittedRef    = useRef<{ text: string; at: number }>({ text: "", at: 0 });
@@ -290,6 +291,18 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
       if (interim) lastInterimRef.current = interim;
       // Show the most complete text available to the user
       setTranscript(accumulatedFinalRef.current || interim);
+
+      // ── Automatic speech-end detection (spec) ──────────────────────────
+      // iOS Safari may never deliver isFinal. Once we have ANY useful
+      // transcript, (re)start a short silence timer; when the user stops
+      // speaking, stop the engine — onend submits the best transcript once.
+      if (accumulatedFinalRef.current || lastInterimRef.current) {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          silenceTimerRef.current = null;
+          try { rec.stop(); } catch { /* already stopped */ }
+        }, 1600);
+      }
     };
 
     rec.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -305,6 +318,10 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
     };
 
     rec.onend = () => {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
       // ── iOS Safari fix ────────────────────────────────────────────────
       // On iOS, recognition may end without onresult ever firing isFinal=true.
       // We submit whatever we accumulated: final transcript first, then fall

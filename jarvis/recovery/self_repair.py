@@ -111,6 +111,9 @@ class SelfRepairManager:
             "tts_api_key_missing", "tts_auth_failed", "tts_voice_not_found",
             "tts_model_invalid", "tts_upstream_error", "tts_network_error",
             "tts_invalid_audio", "tts_playback_error",
+            "tts_quota_or_billing", "tts_forbidden",
+            "tts_voice_or_endpoint_not_found", "tts_invalid_request",
+            "tts_rate_limited", "tts_upstream_server_error",
         ):
             if tts_cat in combined:
                 return tts_cat
@@ -227,7 +230,7 @@ class SelfRepairManager:
         Transient categories signal a bounded retry; configuration/auth
         categories report the exact user action required.
         """
-        if failure_type in ("tts_network_error", "tts_invalid_audio"):
+        if failure_type in ("tts_network_error", "tts_invalid_audio", "tts_rate_limited"):
             return RepairResult(
                 success=True,  # bounded retry (attempt counter still applies)
                 failure_type=failure_type,
@@ -249,18 +252,25 @@ class SelfRepairManager:
                 ],
                 message="Playback failed in the browser — synthesis itself succeeded.",
             )
-        if failure_type in ("tts_api_key_missing", "tts_auth_failed"):
+        if failure_type in (
+            "tts_api_key_missing", "tts_auth_failed",
+            "tts_quota_or_billing", "tts_forbidden",
+        ):
             return RepairResult(
                 success=False,
                 failure_type=failure_type,
                 actions=[
                     f"Diagnosed: {failure_type}.",
                     "Secrets are never modified by self-repair.",
-                    "User action required: verify ELEVENLABS_API_KEY in the secret store.",
+                    "User action required: verify ELEVENLABS_API_KEY in the secret "
+                    "store, and check the ElevenLabs plan/quota for billing errors.",
                 ],
-                message="ElevenLabs authentication problem — user action required.",
+                message="ElevenLabs auth/billing problem — user action required.",
             )
-        if failure_type in ("tts_voice_not_found", "tts_model_invalid"):
+        if failure_type in (
+            "tts_voice_not_found", "tts_model_invalid",
+            "tts_voice_or_endpoint_not_found", "tts_invalid_request",
+        ):
             return RepairResult(
                 success=False,
                 failure_type=failure_type,

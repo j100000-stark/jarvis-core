@@ -1,0 +1,373 @@
+The current build is NOT working correctly in two critical areas.
+
+Do NOT assume the UI status means the underlying subsystem is actually running.
+
+First diagnose the real runtime behavior, then fix it.
+
+==================================================
+1. WAKE WORD IS NOT ACTUALLY ACTIVE
+==================================================
+
+The UI currently shows:
+
+> MICROPHONE ........ READY
+> WAKE WORD ........ ACTIVE — SAY "JARVIS"
+
+But on iPhone Safari, saying "Jarvis" does nothing.
+
+This means the UI is claiming that the wake-word engine is active without proving that SpeechRecognition is actually running.
+
+Fix this properly.
+
+IMPORTANT:
+
+"WAKE WORD ACTIVE" must only be displayed after the actual browser speech recognition engine successfully starts.
+
+Instrument the complete lifecycle:
+
+MIC_PERMISSION
+MIC_INITIALIZED
+RECOGNITION_CREATED
+RECOGNITION_STARTED
+RECOGNITION_RESULT
+RECOGNITION_END
+RECOGNITION_ERROR
+RECOGNITION_RESTART
+WAKE_WORD_DETECTED
+
+The terminal must reflect REAL state, never simulated state.
+
+==================================================
+IOS SAFARI WAKE-WORD ARCHITECTURE
+==================================================
+
+Use the existing SpeechRecognition implementation.
+
+Do NOT create a fake wake-word system.
+
+When the page is active and microphone permission is granted:
+
+start the recognition engine.
+
+Configure it for:
+- Italian
+- continuous where supported
+- interimResults=true where supported
+
+The recognition loop must survive iOS Safari's tendency to terminate recognition.
+
+When onend fires unexpectedly while wake-word mode is enabled:
+
+WAKE WORD → INTERRUPTED
+then automatically attempt:
+
+RECOGNITION → RESTARTING
+then:
+RECOGNITION → ACTIVE
+
+Use a guarded restart loop.
+
+Prevent:
+- multiple recognition instances
+- duplicate starts
+- duplicate wake events
+- infinite restart loops
+- multiple simultaneous requests
+
+Add a small restart backoff.
+
+==================================================
+WAKE WORD DETECTION
+==================================================
+
+Detect:
+
+"Jarvis"
+"Hey Jarvis"
+"Jarvis ci sei"
+"Jarvis, ci sei"
+
+Normalize:
+- lowercase
+- punctuation
+- accents
+- whitespace
+
+When detected:
+
+WAKE WORD → DETECTED
+LISTENING → ACTIVE
+
+Remove the wake phrase from the command.
+
+Example:
+
+"Jarvis, che ore sono?"
+
+must become:
+
+"che ore sono?"
+
+Do not send "Jarvis" to the LLM.
+
+==================================================
+AUTOMATIC SPEECH END
+==================================================
+
+After the wake word:
+
+JARVIS must automatically listen for the command.
+
+The user must NOT need to press another button.
+
+Example:
+
+User:
+"Jarvis, come stai?"
+
+Then silence.
+
+System:
+
+LISTENING
+→ SPEECH ENDED
+→ TRANSCRIBING
+→ REQUEST SENT
+
+Implement silence detection using interim/final speech results and a short debounce/silence timer.
+
+Do NOT depend exclusively on isFinal=true because iOS Safari can behave inconsistently.
+
+Use accumulated transcript.
+
+If no final result arrives but useful interim speech exists and the user becomes silent, submit the best available transcript once.
+
+Never submit twice.
+
+==================================================
+IMPORTANT IOS LIMITATION
+==================================================
+
+A normal Safari web application cannot behave exactly like native Siri with an always-on wake word while Safari is suspended/backgrounded.
+
+DO NOT pretend otherwise.
+
+Implement the best reliable foreground behavior.
+
+If continuous recognition is unavailable or Safari terminates it repeatedly:
+
+show the REAL state:
+
+> WAKE WORD ........ PAUSED — TAP MIC TO REACTIVATE
+
+Do NOT show:
+
+> WAKE WORD ACTIVE
+
+unless recognition is actually running.
+
+The manual microphone button must remain as a reliable fallback.
+
+==================================================
+2. ELEVENLABS TTS_UPSTREAM_ERROR
+==================================================
+
+The current UI shows:
+
+> VOICE ........ READY
+> ELEVENLABS .... TTS_UPSTREAM_ERROR
+
+This is also misleading.
+
+VOICE READY must NOT mean "configuration exists".
+
+It should mean that ElevenLabs configuration has been validated and a real synthesis request has succeeded.
+
+Run a real server-side ElevenLabs health/synthesis test using a very short sentence.
+
+Trace:
+
+ELEVENLABS_API_KEY
+ELEVENLABS_VOICE_ID
+ELEVENLABS_MODEL
+/api/tts
+ElevenLabs HTTP response
+response body
+Content-Type
+audio bytes
+
+Never expose:
+- API keys
+- authorization headers
+- secrets
+
+==================================================
+TTS ERROR CLASSIFICATION
+==================================================
+
+Capture the actual ElevenLabs upstream HTTP status and sanitized response body.
+
+Classify errors:
+
+401 → TTS_AUTH_FAILED
+402 → TTS_QUOTA_OR_BILLING
+403 → TTS_FORBIDDEN
+404 → TTS_VOICE_OR_ENDPOINT_NOT_FOUND
+422 → TTS_INVALID_REQUEST
+429 → TTS_RATE_LIMITED
+5xx → TTS_UPSTREAM_SERVER_ERROR
+network → TTS_NETWORK_ERROR
+invalid audio → TTS_INVALID_AUDIO
+
+Do not just return:
+
+"TTS_UPSTREAM_ERROR"
+
+if the real reason is available.
+
+The frontend terminal should display something useful such as:
+
+> ELEVENLABS .... AUTHENTICATING
+> ELEVENLABS .... SYNTHESIZING
+> ELEVENLABS .... ERROR 401
+> TTS ........... AUTH_FAILED
+> TTS ........... BROWSER_FALLBACK
+
+Never expose the API key.
+
+==================================================
+ELEVENLABS CONFIGURATION
+==================================================
+
+Verify the actual values being used by the running API server:
+
+ELEVENLABS_API_KEY
+ELEVENLABS_VOICE_ID
+ELEVENLABS_MODEL
+
+Do NOT print their values.
+
+Only print safe metadata:
+
+API KEY: PRESENT / MISSING
+VOICE ID: PRESENT / MISSING
+MODEL: <model name>
+REQUEST: SUCCESS / FAILED
+
+Verify that the configured voice ID actually exists.
+
+Verify that the configured model is accepted by the current ElevenLabs endpoint.
+
+Do not invent or silently replace the voice ID.
+
+==================================================
+TTS STATE MACHINE
+==================================================
+
+Use truthful states:
+
+IDLE
+REQUESTING
+CONNECTING
+SYNTHESIZING
+RECEIVED
+PLAYING
+SPEAKING
+ENDED
+
+Failure:
+
+TTS_ERROR
+FALLBACK
+
+Do not set SPEAKING before audio.play() actually starts.
+
+Do not call the system READY simply because configuration variables exist.
+
+==================================================
+REAL END-TO-END TEST
+==================================================
+
+After fixing everything:
+
+1. Open the JARVIS app on iPhone Safari.
+
+2. Verify microphone permission.
+
+3. Verify the terminal says:
+
+MICROPHONE ........ READY
+RECOGNITION ....... STARTED
+WAKE WORD ......... ACTIVE
+
+only if SpeechRecognition is actually running.
+
+4. Say:
+
+"Jarvis, ci sei?"
+
+5. Verify:
+
+WAKE WORD → DETECTED
+LISTENING → ACTIVE
+
+6. Say:
+
+"Come mi chiamo?"
+
+7. Stop speaking.
+
+8. Verify automatic:
+
+SPEECH ENDED
+TRANSCRIBING
+REQUEST SENT
+GROQ PROCESSING
+RESPONSE GENERATED
+TTS REQUESTING
+ELEVENLABS SYNTHESIZING
+AUDIO PLAYING
+SPEAKING
+
+9. Verify that I actually hear the ElevenLabs voice.
+
+10. If ElevenLabs fails, show the exact sanitized reason and then browser fallback.
+
+==================================================
+DO NOT FINISH WITH UNIT TESTS ONLY
+==================================================
+
+Run:
+
+- complete Python test suite
+- TypeScript check
+- API tests
+- real Groq request
+- real ElevenLabs synthesis request
+- real microphone recognition test where possible
+
+Then restart the workflows and test the running application.
+
+Do not claim:
+
+"Wake word active"
+
+unless the browser recognition engine actually started.
+
+Do not claim:
+
+"Voice ready"
+
+unless the TTS system was actually verified.
+
+At the end report the exact root cause of:
+
+1. Why "Jarvis" was not activating.
+2. Why ElevenLabs returned TTS_UPSTREAM_ERROR.
+3. What files were changed.
+4. Test count.
+5. Whether the real ElevenLabs synthesis succeeded.
+6. Whether real wake-word detection succeeded on iPhone Safari.
+7. Any unavoidable iOS/Safari limitations.
+
+Do not fabricate successful tests.
