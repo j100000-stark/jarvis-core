@@ -1,0 +1,806 @@
+JARVIS — FINAL CINEMATIC AI OPERATING SYSTEM UI
+
+IMPORTANT:
+This is the FINAL frontend redesign.
+
+Do NOT modify the existing backend architecture unless a tiny backend change is absolutely necessary to expose a real event/state to the frontend.
+
+Preserve all existing functionality:
+
+- Groq LLM
+- ElevenLabs TTS
+- SpeechRecognition/STT
+- browser SpeechSynthesis fallback
+- Memory
+- Tools
+- AgentOrchestrator
+- Security subsystem
+- Resilience subsystem
+- Watchdog
+- Crash recovery
+- Network recovery
+- DemoBrain
+- LocalAIProvider
+- API routes
+- system status
+- execution traces
+- safety gates
+
+The goal is to make JARVIS feel like a real cinematic AI operating console.
+
+==================================================
+1. CORE PHILOSOPHY
+==================================================
+
+JARVIS must NOT look like a normal chatbot.
+
+The user opens the website and immediately sees a living AI system.
+
+The Neural Core is the main element.
+
+The interface should feel:
+
+alive
+responsive
+technical
+cinematic
+minimal
+intelligent
+
+Do NOT fill the screen with cards.
+
+Do NOT create a generic SaaS dashboard.
+
+==================================================
+2. NEURAL CORE
+==================================================
+
+The Neural Core is the HERO element.
+
+It must look like a living artificial neural system.
+
+Use Canvas/WebGL with requestAnimationFrame.
+
+Avoid:
+- simple CSS scale animations
+- predictable loops
+- rotating GIF-like spheres
+- synchronized particle movement
+
+Each neuron should have independent:
+- position
+- phase
+- speed
+- depth
+- brightness
+- activation probability
+
+Connections should dynamically:
+- appear
+- disappear
+- brighten
+- dim
+- carry energy pulses
+
+Ambient neural activity should continue while idle.
+
+This ambient activity is visual only.
+
+Never fabricate technical system events.
+
+==================================================
+3. STARTUP
+==================================================
+
+Startup animation:
+
+0–0.5 sec
+BLACK
+
+0.5–1.5 sec
+Tiny blue central point.
+
+1.5–2.5 sec
+Neurons form.
+
+2.5–3.5 sec
+Connections form.
+
+3.5+ sec
+System enters IDLE breathing state.
+
+Keep it short.
+
+==================================================
+4. IDLE
+==================================================
+
+Connected + no active task:
+
+STATE:
+IDLE
+
+Neural Core:
+- slow breathing
+- subtle blue glow
+- random small neural activations
+- occasional energy pulses
+- subtle orbital movement
+
+The system must look alive even when nothing is happening.
+
+==================================================
+5. LISTENING
+==================================================
+
+When microphone/STT is active:
+
+STATE:
+LISTENING
+
+Visual:
+- cyan/blue glow increases
+- neurons become more active
+- subtle inward particle motion
+- optional microphone amplitude response
+
+No large:
+"TAP TO TALK"
+"TAP TO SPEAK"
+
+Keep microphone control small.
+
+==================================================
+6. THINKING
+==================================================
+
+When Groq is processing:
+
+STATE:
+THINKING
+
+Visual:
+- increased neural firing
+- brighter connections
+- faster internal motion
+- traveling energy pulses
+- stronger blue/cyan glow
+
+Do NOT expose private chain-of-thought.
+
+Only show safe execution status.
+
+==================================================
+7. EXECUTING
+==================================================
+
+When agents/tools are executing:
+
+STATE:
+EXECUTING
+
+Visual:
+- localized neural activation
+- energy moving between regions
+- increased network activity
+
+The activity terminal must show real execution events.
+
+==================================================
+8. SPEAKING
+==================================================
+
+When ElevenLabs audio actually begins:
+
+STATE:
+SPEAKING
+
+The Neural Core must react to actual audio playback.
+
+Visual:
+- rhythmic pulses
+- increased glow
+- energy propagation
+- subtle audio-reactive movement
+
+When audio ends:
+
+STATE:
+IDLE
+
+Do NOT use a fake fixed speaking timer.
+
+If ElevenLabs fails and SpeechSynthesis fallback is used:
+keep SPEAKING state synchronized with actual fallback playback.
+
+==================================================
+9. OFFLINE
+==================================================
+
+If runtime is unreachable:
+
+STATE:
+OFFLINE
+
+Visual:
+- very dim
+- minimal movement
+- frozen/ghost-like neural activity
+
+Never claim the runtime is online when it isn't.
+
+==================================================
+10. ALERT SYSTEM
+==================================================
+
+Implement a real visual ALERT system.
+
+Normal system color:
+BLUE / CYAN
+
+Warning:
+AMBER
+
+Error:
+RED
+
+Critical:
+DEEP RED / HIGH INTENSITY
+
+IMPORTANT:
+
+Do NOT turn the entire screen red.
+
+Only the affected subsystem/event should become red.
+
+Example:
+
+Normal:
+
+> RUNTIME ............. ONLINE
+> NETWORK ............. ONLINE
+> MEMORY .............. READY
+
+Error:
+
+> NETWORK ............. ERROR
+> CONNECTION LOST
+> RECOVERY ATTEMPT
+
+Those affected terminal lines should glow red.
+
+The Neural Core should briefly react with a red/amber pulse.
+
+A compact alert card should appear:
+
+⚠ NETWORK ERROR
+Connection lost.
+Recovery attempt in progress.
+
+==================================================
+11. ERROR RECOVERY VISUALIZATION
+==================================================
+
+When the system detects an actual failure:
+
+STEP 1:
+
+> NETWORK ........ ERROR
+
+RED
+
+STEP 2:
+
+> RECOVERY ........ ATTEMPTING
+
+AMBER
+
+STEP 3:
+
+> NETWORK ........ ONLINE
+
+BLUE
+
+If recovery fails:
+
+> RECOVERY ........ FAILED
+
+RED
+
+And show:
+
+SYSTEM ALERT
+Network recovery failed.
+
+Use the REAL backend recovery state.
+
+Do NOT simulate successful recovery.
+
+==================================================
+12. WARNING STATES
+==================================================
+
+Warnings should use amber.
+
+Examples:
+
+> CPU LOAD ........ HIGH
+> MEMORY ........... LIMITED
+> NETWORK .......... DEGRADED
+
+Amber terminal lines.
+
+Amber Neural Core pulse.
+
+Compact warning card only when relevant.
+
+==================================================
+13. CRITICAL EVENTS
+==================================================
+
+For real critical events:
+
+Use:
+- stronger red glow
+- brief Neural Core pulse
+- alert card
+- terminal event
+
+Do not constantly flash the UI.
+
+The visual should be cinematic and controlled.
+
+==================================================
+14. LIVE TERMINAL
+==================================================
+
+Create a compact LIVE ACTIVITY terminal beneath/around the Neural Core.
+
+Style:
+- monospace
+- small
+- futuristic
+- low opacity
+- blue/cyan accents
+- subtle glow
+
+Show 8–15 lines.
+
+Newest at bottom.
+
+Older events scroll upward.
+
+Example:
+
+> RUNTIME ............. ONLINE
+> MEMORY .............. READY
+> NETWORK ............. MONITORING
+> SECURITY ............ STANDBY
+> GROQ ................ CONNECTED
+> MODEL ............... gpt-oss-120b
+> ELEVENLABS .......... READY
+> VOICE ............... READY
+> WATCHDOG ............ ACTIVE
+> TOOLS ............... 11 REGISTERED
+> SYSTEM .............. NOMINAL
+
+Technical status must come from real backend state.
+
+==================================================
+15. LIVE REQUEST TRACE
+==================================================
+
+When user speaks:
+
+> INPUT RECEIVED
+> SPEECH TRANSCRIBED
+> REQUEST RECEIVED
+> GROQ PROCESSING
+> PLAN CREATED
+> AGENT SELECTED
+> TOOL EXECUTION
+> RESULT RECEIVED
+> RESPONSE GENERATED
+> ELEVENLABS SYNTHESIS
+> AUDIO STREAM
+> JARVIS SPEAKING
+
+Use actual execution events wherever available.
+
+Never show:
+- hidden chain-of-thought
+- private reasoning
+- system prompts
+- API keys
+- credentials
+- secrets
+
+Show actions, not internal thoughts.
+
+==================================================
+16. CHAT
+==================================================
+
+DO NOT DELETE CHAT.
+
+Make chat secondary and compact.
+
+Normal response:
+
+JARVIS RESPONSE
+
+"Il sistema è operativo."
+
+Small readable card.
+
+It can automatically minimize.
+
+Allow expansion for conversation history.
+
+==================================================
+17. IMPORTANT EVENTS
+==================================================
+
+If something genuinely important happens:
+
+Automatically expand the response/alert card.
+
+Examples:
+
+SYSTEM ALERT
+A component is not responding.
+
+BACKUP COMPLETE
+247 files processed.
+
+NETWORK ALERT
+Connection lost.
+
+SECURITY ALERT
+Suspicious local event detected.
+
+Normal conversation should remain minimal.
+
+==================================================
+18. DEMO MODE
+==================================================
+
+Keep DemoBrain.
+
+If DemoBrain is active:
+
+Show:
+
+DEMO MODE
+SCRIPTED EXECUTION — NO REAL AI CONNECTED
+
+Terminal events:
+
+> [DEMO] REQUEST RECEIVED
+> [DEMO] AGENT SELECTED
+> [DEMO] SYSTEM SNAPSHOT
+> [DEMO] ANALYSIS COMPLETE
+> [DEMO] SAFETY CHECK
+> [DEMO] RESPONSE READY
+
+Use actual DemoBrain execution events.
+
+Never make Demo mode appear like real AI.
+
+==================================================
+19. REAL LLM
+==================================================
+
+When actual provider is active:
+
+Show:
+
+REAL LLM
+GROQ
+gpt-oss-120b
+
+This must come from the backend.
+
+Never display REAL LLM if DemoBrain is active.
+
+==================================================
+20. TTS
+==================================================
+
+ElevenLabs is the primary TTS provider.
+
+When synthesis begins:
+
+> ELEVENLABS // SYNTHESIS
+
+When audio begins:
+
+> AUDIO // STREAMING
+> JARVIS // SPEAKING
+
+When audio ends:
+
+> JARVIS // IDLE
+
+Keep browser SpeechSynthesis fallback.
+
+Synchronize Neural Core with actual audio playback.
+
+==================================================
+21. MICROPHONE
+==================================================
+
+Keep microphone functionality.
+
+Make the control small.
+
+No:
+"TAP TO TALK"
+
+No:
+"TAP TO SPEAK"
+
+When active:
+- subtle cyan glow
+- LISTENING state
+- neural activity increases
+
+==================================================
+22. MAIN LAYOUT
+==================================================
+
+TOP:
+
+JARVIS
+REAL LLM / DEMO / LOCAL LLM
+small connection/security status
+
+CENTER:
+
+LARGE NEURAL CORE
+
+BELOW CORE:
+
+CURRENT STATE
+
+LIVE ACTIVITY TERMINAL
+
+LOWER:
+
+small JARVIS RESPONSE / CHAT area
+
+BOTTOM:
+
+minimal controls:
+MIC
+CHAT
+SYSTEM
+
+The Neural Core must dominate the screen.
+
+==================================================
+23. TERMINAL COLOR SYSTEM
+==================================================
+
+NORMAL:
+Blue/cyan
+
+INFO:
+Light blue
+
+SUCCESS:
+Blue/green or cyan-green
+
+WARNING:
+Amber/orange
+
+ERROR:
+Red
+
+CRITICAL:
+Red + stronger glow
+
+RECOVERY:
+Amber → blue when successful
+
+The colors must be driven by actual event severity.
+
+Do not color everything red when one subsystem fails.
+
+==================================================
+24. SMOOTH TRANSITIONS
+==================================================
+
+All state/color transitions must be smooth.
+
+Do not instantly switch colors unless a critical alert requires it.
+
+Use interpolation/fading.
+
+Example:
+
+BLUE
+↓
+AMBER
+↓
+RED
+
+and recovery:
+
+RED
+↓
+AMBER
+↓
+BLUE
+
+==================================================
+25. MOBILE
+==================================================
+
+Optimize for iPhone Safari.
+
+Support:
+- safe areas
+- dynamic viewport
+- touch
+- Safari UI
+- no horizontal scroll
+
+Neural Core must remain visible.
+
+==================================================
+26. DESKTOP
+==================================================
+
+Desktop should preserve the same cinematic design.
+
+Do NOT transform into a generic dashboard.
+
+Give the terminal slightly more space.
+
+Neural Core remains the visual centerpiece.
+
+==================================================
+27. PERFORMANCE
+==================================================
+
+Target 60fps.
+
+Do not update React state every animation frame.
+
+Keep Canvas rendering isolated.
+
+Use devicePixelRatio carefully.
+
+Pause/reduce animation when the page is hidden.
+
+==================================================
+28. SECURITY
+==================================================
+
+Never display:
+- API keys
+- secrets
+- credentials
+- hidden prompts
+- private reasoning
+
+Only safe execution/status events.
+
+==================================================
+29. EXISTING FUNCTIONALITY
+==================================================
+
+Do not break:
+
+Groq
+ElevenLabs
+STT
+TTS fallback
+Memory
+Tools
+Agents
+Security
+Resilience
+Watchdog
+Network recovery
+DemoBrain
+LocalAIProvider
+API
+System status
+Execution traces
+Safety gates
+
+==================================================
+30. FINAL FEEL
+==================================================
+
+When idle:
+
+Black screen.
+Blue living neural core.
+Small technical terminal quietly scrolling.
+
+When user speaks:
+
+Core wakes up.
+Terminal accelerates.
+LISTENING.
+
+Then:
+
+THINKING.
+Neurons fire.
+Groq processes.
+
+Then:
+
+EXECUTING.
+Real tools appear.
+
+Then:
+
+ELEVENLABS.
+Voice synthesis.
+
+Then:
+
+SPEAKING.
+Core reacts to actual audio.
+
+Then:
+
+IDLE.
+Everything settles.
+
+If something goes wrong:
+
+The affected subsystem turns AMBER/RED.
+The core reacts.
+A compact alert appears.
+Recovery is shown.
+If recovery succeeds, the system smoothly returns to BLUE.
+
+The result must feel like a real personal AI operating system.
+
+NOT a chatbot.
+NOT a generic dashboard.
+NOT a fake hacker interface.
+
+A living JARVIS console.
+
+==================================================
+31. FINAL VERIFICATION
+==================================================
+
+Run:
+
+python -m unittest discover -s tests -v
+
+Run both TypeScript checks.
+
+Verify:
+- startup
+- idle
+- listening
+- thinking
+- executing
+- speaking
+- offline
+- warning
+- error
+- critical
+- recovery
+- demo
+- real LLM
+- ElevenLabs
+- fallback TTS
+- chat
+- live terminal
+- alerts
+- iPhone
+- desktop
+
+Do not finish until existing functionality remains intact.
+
+Report all modified files, tests and TypeScript results.

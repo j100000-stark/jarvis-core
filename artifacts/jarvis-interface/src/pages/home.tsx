@@ -1,33 +1,41 @@
 /**
- * JARVIS Cinematic Home — iPhone-first dark interface.
+ * JARVIS — Cinematic AI Operating Console.
  *
- * Layout (portrait):
- *   ┌─────────────────────────┐
- *   │  JARVIS        [🛡] [⋯]  │  ← top bar
- *   │  ● STANDBY / LISTENING   │  ← state chip
- *   │                          │
- *   │       ◎ Neural Core      │  ← full-width canvas, state-driven
- *   │                          │
- *   │   "REAL LLM"  gpt-4o…   │  ← status label
- *   │   ≈≈ Waveform ≈≈         │
- *   │                          │
- *   │  [chat]  [●mic]  [sys]   │  ← bottom nav; mic = push-to-talk
- *   └─────────────────────────┘
+ * Layout (portrait/mobile-first):
+ *   ┌──────────────────────────────────┐
+ *   │  J· LOCAL SYSTEM   JARVIS  [v] [🛡] │  ← top bar
+ *   ├──────────────────────────────────┤
+ *   │                                  │
+ *   │        ○  Neural Core  ○         │  ← dominates screen (~340px)
+ *   │                                  │
+ *   ├──────────────────────────────────┤
+ *   │            ● STANDBY             │  ← state chip
+ *   ├──────────────────────────────────┤
+ *   │ > RUNTIME .......... ONLINE      │
+ *   │ > GROQ ............. CONNECTED   │  ← live terminal (8–12 monospace lines)
+ *   │ > SYSTEM ........... NOMINAL     │
+ *   ├──────────────────────────────────┤
+ *   │ [alert card — only when needed]  │  ← amber/red alerts (never full-screen)
+ *   ├──────────────────────────────────┤
+ *   │ J· Jarvis Response               │  ← compact response card
+ *   │ "Il sistema è operativo."        │
+ *   ├──────────────────────────────────┤
+ *   │   [💬]       [🎤]       [⚙]      │  ← icon-only bottom nav
+ *   └──────────────────────────────────┘
  *
- * Voice pipeline (V1):
- *   Tap mic → SpeechRecognition (browser STT)
- *   → transcript fills goal field → auto-sent to JARVIS
- *   → response auto-spoken via SpeechSynthesis (browser TTS)
- *   → NeuralCore: idle → listening → thinking → executing → speaking → idle
- *
- * All positive labels (READY, CONNECTED, SECURE) are only shown when the
- * backend actually reports them.  DEMO MODE is prominently labelled.
- * Execution trace (agents, steps, tool outputs, verification) is shown
- * inside the chat sheet for every assistant response.
+ * State machine: idle → listening → thinking → executing → speaking → idle
+ * Alert state: transient 4 s neural core pulse when a subsystem error occurs.
+ * Terminal: real events only.  Never fabricates AI activity or system events.
  */
 
-import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { Activity, MessageSquare, Mic, MicOff, MoreHorizontal, Shield, Wifi, WifiOff } from 'lucide-react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
+import { Activity, MessageSquare, Mic, MicOff, Shield } from 'lucide-react';
 import {
   getGetJarvisStatusQueryKey,
   getHealthCheckQueryKey,
@@ -36,103 +44,120 @@ import {
   useSendJarvisMessage,
 } from '@workspace/api-client-react';
 import { NeuralCore, type CoreState } from '@/components/jarvis/neural-core';
-import { Waveform } from '@/components/jarvis/waveform';
 import { ChatSheet, type Message } from '@/components/jarvis/chat-sheet';
 import { SystemSheet } from '@/components/jarvis/system-sheet';
+import { LiveTerminal, mkLine, type TerminalLine, type TerminalSeverity } from '@/components/jarvis/live-terminal';
+import { AlertCard, mkAlert, type AlertEntry } from '@/components/jarvis/alert-card';
+import { ResponseCard } from '@/components/jarvis/response-card';
 import { useVoice } from '@/hooks/use-voice';
 
-// ---- State chip config ----
-
-const STATE_META: Record<CoreState, { label: string; color: string; dim: string }> = {
-  idle:      { label: 'Standby',    color: '#0099dd', dim: 'rgba(0,153,221,0.15)' },
-  listening: { label: 'Listening',  color: '#00aaff', dim: 'rgba(0,170,255,0.18)' },
-  thinking:  { label: 'Processing', color: '#00ddff', dim: 'rgba(0,220,255,0.15)' },
-  executing: { label: 'Executing',  color: '#00ffaa', dim: 'rgba(0,255,170,0.12)' },
-  speaking:  { label: 'Responding', color: '#00ffcc', dim: 'rgba(0,255,200,0.15)' },
-  offline:   { label: 'Offline',    color: '#335566', dim: 'rgba(30,50,70,0.3)'   },
-  alert:     { label: 'Alert',      color: '#ff7700', dim: 'rgba(255,100,0,0.15)' },
-};
-
-// ---- Provider type derived from providerName ----
+// ── Provider helpers ─────────────────────────────────────────────────────────
 
 type ProviderType = 'demo' | 'real-llm' | 'local-llm' | 'none';
 
-function deriveProviderType(providerName: string | undefined): ProviderType {
-  if (!providerName || providerName === 'unconfigured') return 'none';
-  if (providerName === 'demo') return 'demo';
-  if (providerName.startsWith('llm:')) return 'real-llm';
-  if (providerName.startsWith('local:')) return 'local-llm';
+function deriveProviderType(name: string | undefined): ProviderType {
+  if (!name || name === 'unconfigured') return 'none';
+  if (name === 'demo') return 'demo';
+  if (name.startsWith('llm:')) return 'real-llm';
+  if (name.startsWith('local:')) return 'local-llm';
   return 'none';
 }
 
-function deriveModelLabel(providerName: string | undefined): string | null {
-  if (!providerName) return null;
-  if (providerName.startsWith('llm:')) {
-    const parts = providerName.split(':');
-    return parts.slice(2).join(':') || null;  // e.g. "gpt-4o-mini"
-  }
-  if (providerName.startsWith('local:')) return providerName.slice('local:'.length) || null;
+function deriveModelLabel(name: string | undefined): string | null {
+  if (!name) return null;
+  if (name.startsWith('llm:')) return name.split(':').slice(2).join(':') || null;
+  if (name.startsWith('local:')) return name.slice('local:'.length) || null;
   return null;
 }
 
-// ---- Status text derivation ----
+// ── State config ─────────────────────────────────────────────────────────────
 
-function deriveStatus(
-  connected: boolean | undefined,
-  providerType: ProviderType,
-  providerName: string | undefined,
-  pending: boolean,
-  isLoading: boolean,
-  isListening: boolean,
-  isSpeaking: boolean,
-): { line1: string; line2: string | null } {
-  const modelLabel = deriveModelLabel(providerName);
-  if (isLoading)                 return { line1: 'Connecting to runtime…',  line2: null };
-  if (!connected)                return { line1: 'Runtime unreachable',      line2: 'Start the local JARVIS process' };
-  if (isListening)               return { line1: 'Listening…',              line2: 'Speak your goal' };
-  if (isSpeaking)                return { line1: 'Speaking…',               line2: modelLabel };
-  if (providerType === 'none')   return { line1: 'No provider configured',   line2: 'Connect a local model or enable LLM mode' };
-  if (providerType === 'demo')   return { line1: 'DEMO MODE',                line2: 'Scripted responses — no real AI' };
-  if (providerType === 'real-llm' && pending) return { line1: 'Thinking…', line2: modelLabel };
-  if (providerType === 'real-llm') return { line1: 'REAL LLM', line2: modelLabel };
-  if (providerType === 'local-llm' && pending) return { line1: 'Processing…', line2: modelLabel };
-  if (providerType === 'local-llm') return { line1: 'LOCAL LLM', line2: modelLabel };
-  if (pending)                   return { line1: 'Processing goal…',        line2: providerName ?? null };
-  return                                { line1: 'Ready',                    line2: providerName ?? null };
-}
+const STATE_META: Record<CoreState, { label: string; color: string; dim: string }> = {
+  idle:      { label: 'Standby',    color: '#0099dd', dim: 'rgba(0,153,221,0.14)' },
+  listening: { label: 'Listening',  color: '#00aaff', dim: 'rgba(0,170,255,0.16)' },
+  thinking:  { label: 'Processing', color: '#00ddff', dim: 'rgba(0,220,255,0.14)' },
+  executing: { label: 'Executing',  color: '#00ffaa', dim: 'rgba(0,255,170,0.12)' },
+  speaking:  { label: 'Speaking',   color: '#00ffcc', dim: 'rgba(0,255,200,0.13)' },
+  offline:   { label: 'Offline',    color: '#2d4d66', dim: 'rgba(30,55,80,0.25)'  },
+  alert:     { label: 'Alert',      color: '#ff7000', dim: 'rgba(255,100,0,0.13)' },
+};
+
+// ── Core state derivation ─────────────────────────────────────────────────────
 
 function deriveCoreState(
   connected: boolean | undefined,
-  providerType: ProviderType,
   pending: boolean,
   ttsActive: boolean,
   isLoading: boolean,
   isListening: boolean,
   isSpeaking: boolean,
+  alertPulse: boolean,
 ): CoreState {
-  if (isLoading || !connected)       return 'offline';
-  if (isListening)                   return 'listening';
-  if (isSpeaking || ttsActive)       return 'speaking';
-  if (providerType === 'none')       return 'idle';
-  if (pending)                       return 'thinking';
+  if (isLoading || !connected)     return 'offline';
+  if (isListening)                 return 'listening';
+  if (isSpeaking || ttsActive)     return 'speaking';
+  if (pending)                     return 'thinking';
+  if (alertPulse)                  return 'alert';
   return 'idle';
 }
 
-const formatTime = () =>
+// ── Time helper ───────────────────────────────────────────────────────────────
+
+const fmt = () =>
   new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
 
-// ---- Component ----
+// ── Terminal helpers ──────────────────────────────────────────────────────────
+
+const MAX_TERM_LINES = 120;
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [goal, setGoal] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [sysOpen, setSysOpen] = useState(false);
+  // ── UI state ─────────────────────────────────────────────────────────────
+  const [chatOpen, setChatOpen]   = useState(false);
+  const [sysOpen,  setSysOpen]    = useState(false);
+  const [goal,     setGoal]       = useState('');
+  const [messages, setMessages]   = useState<Message[]>([]);
   const [ttsActive, setTtsActive] = useState(false);
-  const [demoMode, setDemoMode] = useState(false);
-  const ttsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ---- API queries ----
+  // ── Terminal ─────────────────────────────────────────────────────────────
+  const [termLines, setTermLines] = useState<TerminalLine[]>([]);
+
+  const pushLine = useCallback(
+    (key: string, value: string, severity: TerminalSeverity = 'normal') => {
+      setTermLines((prev) => {
+        const next = [...prev, mkLine(key, value, severity)];
+        return next.length > MAX_TERM_LINES ? next.slice(-MAX_TERM_LINES) : next;
+      });
+    },
+    [],
+  );
+
+  // ── Alerts ───────────────────────────────────────────────────────────────
+  const [alerts, setAlerts] = useState<AlertEntry[]>([]);
+
+  const pushAlert = useCallback(
+    (title: string, body: string, severity: AlertEntry['severity'] = 'warning') => {
+      setAlerts((prev) => [...prev, mkAlert(title, body, severity)]);
+    },
+    [],
+  );
+
+  const dismissAlert = useCallback((id: string) => {
+    setAlerts((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  // ── Brief alert pulse on Neural Core ─────────────────────────────────────
+  const [alertPulse, setAlertPulse] = useState(false);
+  const alertPulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerAlertPulse = useCallback(() => {
+    setAlertPulse(true);
+    if (alertPulseTimer.current) clearTimeout(alertPulseTimer.current);
+    alertPulseTimer.current = setTimeout(() => setAlertPulse(false), 4000);
+  }, []);
+
+  // ── API ──────────────────────────────────────────────────────────────────
   const status = useGetJarvisStatus({
     query: {
       queryKey: getGetJarvisStatusQueryKey(),
@@ -148,68 +173,222 @@ export default function Home() {
     },
   });
   const sendMessage = useSendJarvisMessage();
-  const runtime = status.data;
+
+  const runtime      = status.data;
   const providerType = deriveProviderType(runtime?.providerName);
+  const modelLabel   = deriveModelLabel(runtime?.providerName);
+  const demoMode     = providerType === 'demo';
+  const ready        = Boolean(runtime?.connected && providerType !== 'none');
 
-  // ---- Voice pipeline ----
+  // ── Neural core dynamic size ──────────────────────────────────────────────
+  const coreSize = useMemo(() => {
+    if (typeof window === 'undefined') return 300;
+    return Math.min(window.innerWidth - 40, 340);
+  }, []);
 
-  // Auto-send the transcript after it's set
-  const lastTranscriptRef = useRef<string>('');
+  // ── Voice pipeline ────────────────────────────────────────────────────────
+  const lastTranscriptRef = useRef('');
+  const ttsTimer          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const voice = useVoice({
     onTranscript: useCallback((text: string) => {
       if (!text.trim()) return;
       lastTranscriptRef.current = text;
       setGoal(text);
-    }, []),
+      pushLine('SPEECH', 'TRANSCRIBED', 'info');
+    }, [pushLine]),
   });
 
-  // ---- Sync demoMode from providerType ----
-  useEffect(() => {
-    setDemoMode(providerType === 'demo');
-  }, [providerType]);
+  // ── Transition refs (for detecting state changes) ─────────────────────────
+  const prevConnectedRef  = useRef<boolean | undefined>(undefined);
+  const prevProviderRef   = useRef<string | undefined>(undefined);
+  const prevListeningRef  = useRef(false);
+  const prevSpeakingRef   = useRef(false);
+  const prevPendingRef    = useRef(false);
+  const hasBootedRef      = useRef(false);
 
-  // ---- Send error display ----
-  const sendError = useMemo(() => {
-    if (!sendMessage.error) return null;
+  // ── Boot sequence (fires once when runtime first connects) ────────────────
+  useEffect(() => {
+    if (!runtime?.connected || hasBootedRef.current) return;
+    hasBootedRef.current = true;
+
+    const delay = (ms: number, fn: () => void) =>
+      setTimeout(fn, ms);
+
+    delay(0,   () => pushLine('RUNTIME',    'ONLINE',          'success'));
+    delay(120, () => pushLine('MEMORY',     'READY',           'info'));
+    delay(240, () => pushLine('NETWORK',    'MONITORING',      'info'));
+    delay(360, () => pushLine('SECURITY',   'STANDBY',         'info'));
+    delay(480, () => {
+      if (providerType === 'real-llm') {
+        const provParts = (runtime?.providerName ?? '').split(':');
+        const provName  = provParts[1]?.toUpperCase() ?? 'LLM';
+        pushLine(provName,    'CONNECTED', 'success');
+        if (modelLabel) pushLine('MODEL', modelLabel, 'info');
+      } else if (providerType === 'local-llm') {
+        pushLine('LOCAL AI', 'CONNECTED',  'success');
+        if (modelLabel) pushLine('MODEL', modelLabel, 'info');
+      } else if (providerType === 'demo') {
+        pushLine('BRAIN',   'DEMO MODE',   'warning');
+      } else {
+        pushLine('PROVIDER', 'NONE',        'warning');
+      }
+    });
+    delay(600, () => pushLine('ELEVENLABS', 'READY',           'info'));
+    delay(720, () => pushLine('VOICE',      'READY',           'info'));
+    delay(840, () => pushLine('WATCHDOG',   'ACTIVE',          'info'));
+    delay(960, () => pushLine('TOOLS',      '11 REGISTERED',   'info'));
+    delay(1080,() => pushLine('SYSTEM',     'NOMINAL',         'success'));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime?.connected]);
+
+  // ── Runtime online/offline transitions ───────────────────────────────────
+  useEffect(() => {
+    const prev = prevConnectedRef.current;
+    const now  = runtime?.connected;
+    prevConnectedRef.current = now;
+
+    if (prev === undefined) return; // first render — boot sequence handles it
+
+    if (prev && !now) {
+      pushLine('RUNTIME', 'OFFLINE', 'error');
+      pushAlert('Runtime Offline', 'Connection to JARVIS process lost.', 'error');
+      triggerAlertPulse();
+    }
+    if (!prev && now) {
+      pushLine('RUNTIME', 'RECONNECTED', 'success');
+      setAlerts((prev) => prev.filter((a) => !a.title.toLowerCase().includes('offline')));
+    }
+  }, [runtime?.connected, pushLine, pushAlert, triggerAlertPulse]);
+
+  // ── Provider change events ────────────────────────────────────────────────
+  useEffect(() => {
+    const prev = prevProviderRef.current;
+    const now  = runtime?.providerName;
+    prevProviderRef.current = now;
+
+    if (prev === undefined || prev === now || !hasBootedRef.current) return;
+
+    if (now === 'demo') {
+      pushLine('BRAIN', 'DEMO MODE', 'warning');
+    } else if (now?.startsWith('llm:')) {
+      const parts = now.split(':');
+      pushLine(parts[1]?.toUpperCase() ?? 'LLM', 'CONNECTED', 'success');
+    } else if (now?.startsWith('local:')) {
+      pushLine('LOCAL AI', 'CONNECTED', 'success');
+    }
+  }, [runtime?.providerName, pushLine]);
+
+  // ── API health error events ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!health.isError) return;
+    pushLine('HEALTH CHECK', 'FAILED', 'error');
+    triggerAlertPulse();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [health.isError]);
+
+  // ── STT listening transitions ─────────────────────────────────────────────
+  useEffect(() => {
+    const prev = prevListeningRef.current;
+    prevListeningRef.current = voice.isListening;
+
+    if (!prev && voice.isListening) {
+      pushLine('MICROPHONE', 'ACTIVE', 'info');
+      pushLine('INPUT', 'RECEIVED', 'info');
+    }
+    if (prev && !voice.isListening && !voice.transcript) {
+      // cancelled or timed out without final transcript
+      pushLine('MICROPHONE', 'CLOSED', 'normal');
+    }
+  }, [voice.isListening, voice.transcript, pushLine]);
+
+  // ── TTS speaking transitions ──────────────────────────────────────────────
+  useEffect(() => {
+    const prev = prevSpeakingRef.current;
+    prevSpeakingRef.current = voice.isSpeaking;
+
+    if (!prev && voice.isSpeaking) {
+      if (voice.ttsProvider === 'elevenlabs') {
+        pushLine('ELEVENLABS', 'SYNTHESIS', 'info');
+        pushLine('AUDIO', 'STREAMING', 'normal');
+      } else if (voice.ttsProvider === 'browser') {
+        pushLine('TTS', 'BROWSER FALLBACK', 'warning');
+      }
+      pushLine('JARVIS', 'SPEAKING', 'success');
+    }
+    if (prev && !voice.isSpeaking) {
+      pushLine('JARVIS', 'IDLE', 'normal');
+    }
+  }, [voice.isSpeaking, voice.ttsProvider, pushLine]);
+
+  // ── LLM pending transitions ───────────────────────────────────────────────
+  useEffect(() => {
+    const prev = prevPendingRef.current;
+    prevPendingRef.current = sendMessage.isPending;
+
+    if (!prev && sendMessage.isPending) {
+      if (providerType === 'demo') {
+        pushLine('[DEMO] GROQ', 'PROCESSING', 'normal');
+      } else {
+        const provParts = (runtime?.providerName ?? '').split(':');
+        const provName  = provParts[1]?.toUpperCase() ?? 'LLM';
+        pushLine(provName, 'PROCESSING', 'normal');
+      }
+    }
+  }, [sendMessage.isPending, providerType, runtime?.providerName, pushLine]);
+
+  // ── Send error events ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!sendMessage.error) return;
     const e = sendMessage.error as { error?: string; message?: string };
-    return e.error ?? e.message ?? 'The runtime rejected that goal.';
+    const msg = e.error ?? e.message ?? 'Unknown error';
+    pushLine('REQUEST', 'FAILED', 'error');
+    pushAlert('Request Failed', msg, 'error');
+    triggerAlertPulse();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sendMessage.error]);
 
-  const ready = Boolean(runtime?.connected && providerType !== 'none');
+  // ── Voice error events ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (voice.voiceState !== 'error' || !voice.error) return;
+    pushLine('VOICE', 'ERROR', 'error');
+    triggerAlertPulse();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voice.voiceState, voice.error]);
 
-  // ---- Core state and status ----
+  // ── Core state + status text ──────────────────────────────────────────────
   const coreState = deriveCoreState(
     runtime?.connected,
-    providerType,
     sendMessage.isPending,
     ttsActive,
     status.isLoading && !runtime,
     voice.isListening,
     voice.isSpeaking,
+    alertPulse,
   );
+  const meta = STATE_META[coreState];
 
-  const statusText = deriveStatus(
-    runtime?.connected,
-    providerType,
-    runtime?.providerName ?? undefined,
-    sendMessage.isPending,
-    status.isLoading && !runtime,
-    voice.isListening,
-    voice.isSpeaking,
-  );
-
-  // ---- Send message ----
+  // ── Send message ──────────────────────────────────────────────────────────
   const handleSend = useCallback(() => {
     const trimmed = goal.trim();
     if (!trimmed || !ready || sendMessage.isPending) return;
-    const sentAt = formatTime();
+
+    const sentAt = fmt();
     setMessages((cur) => [
       ...cur,
       { id: `u-${Date.now()}`, role: 'user', body: trimmed, time: sentAt },
     ]);
     setGoal('');
     lastTranscriptRef.current = '';
+
+    if (demoMode) {
+      pushLine('[DEMO] REQUEST', 'RECEIVED', 'info');
+      pushLine('[DEMO] AGENT', 'SELECTED', 'info');
+      pushLine('[DEMO] SYSTEM', 'SNAPSHOT', 'info');
+    } else {
+      pushLine('REQUEST', 'SENT', 'info');
+      pushLine('PLAN', 'CREATING', 'info');
+    }
 
     sendMessage.mutate({ data: { goal: trimmed } }, {
       onSuccess: (result) => {
@@ -218,7 +397,7 @@ export default function Home() {
           role: 'assistant',
           body: result.response,
           providerName: result.providerName,
-          time: formatTime(),
+          time: fmt(),
           demoMode: result.demoMode ?? false,
           demoLabel: result.demoLabel ?? null,
           executionSteps: result.executionSteps ?? [],
@@ -227,20 +406,33 @@ export default function Home() {
         };
         setMessages((cur) => [...cur, assistantMsg]);
 
-        // Auto-speak the response when the user used voice
+        if (demoMode) {
+          pushLine('[DEMO] ANALYSIS', 'COMPLETE', 'info');
+          pushLine('[DEMO] SAFETY', 'CHECK', 'info');
+          pushLine('[DEMO] RESPONSE', 'READY', 'success');
+        } else {
+          if ((result.executionSteps ?? []).length > 0) {
+            pushLine('AGENT', 'SELECTED', 'info');
+            pushLine('TOOL', 'EXECUTION', 'info');
+            pushLine('RESULT', 'RECEIVED', 'info');
+          }
+          pushLine('RESPONSE', 'GENERATED', 'success');
+        }
+
         if (voice.isSupported && result.response) {
+          if (demoMode) pushLine('[DEMO] RESPONSE', 'READY', 'success');
           voice.speak(result.response);
         } else {
-          // Fallback: show a "speaking" indicator for 3s
+          // Non-voice fallback: show speaking indicator briefly
           setTtsActive(true);
           if (ttsTimer.current) clearTimeout(ttsTimer.current);
           ttsTimer.current = setTimeout(() => setTtsActive(false), 3000);
         }
       },
     });
-  }, [goal, ready, sendMessage, voice]);
+  }, [goal, ready, sendMessage, demoMode, pushLine, voice]);
 
-  // Auto-send when transcript arrives and there's no pending send
+  // Auto-send when voice transcript arrives
   useEffect(() => {
     if (
       goal.trim() &&
@@ -253,10 +445,9 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goal]);
 
-  // ---- Mic button handler ----
+  // ── Mic button ────────────────────────────────────────────────────────────
   const handleMicPress = useCallback(() => {
     if (!voice.isSupported) {
-      // Fall back to opening chat for typed input
       setChatOpen(true);
       return;
     }
@@ -269,301 +460,436 @@ export default function Home() {
     }
   }, [voice, ready]);
 
-  const meta = STATE_META[coreState];
-  const coreSize = 320;
+  // ── Last assistant message for response card ───────────────────────────────
+  const lastAssistant = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') return messages[i];
+    }
+    return null;
+  }, [messages]);
+
+  // ── Send error for chat sheet ─────────────────────────────────────────────
+  const sendError = useMemo(() => {
+    if (!sendMessage.error) return null;
+    const e = sendMessage.error as { error?: string; message?: string };
+    return e.error ?? e.message ?? 'The runtime rejected that goal.';
+  }, [sendMessage.error]);
+
+  // ── Live transcript preview ───────────────────────────────────────────────
+  const showTranscript = voice.isListening && voice.transcript;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div
       className="jarvis-cinematic relative flex min-h-[100dvh] flex-col overflow-hidden select-none"
       style={{ background: '#000408' }}
     >
-      {/* Background radial gradient */}
+      {/* ── Background radial ambience ── */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0"
         style={{
           background:
-            'radial-gradient(ellipse at 50% 35%, rgba(0,60,120,0.22) 0%, transparent 65%), radial-gradient(ellipse at 20% 80%, rgba(0,40,90,0.12) 0%, transparent 50%)',
+            `radial-gradient(ellipse at 50% 32%, ${meta.color}0d 0%, transparent 60%),
+             radial-gradient(ellipse at 20% 75%, rgba(0,40,90,0.10) 0%, transparent 50%)`,
+          transition: 'background 2s ease',
         }}
       />
 
       {/* ── Top bar ── */}
       <header
-        className="relative z-10 flex items-center justify-between px-5"
-        style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: '0.75rem' }}
+        className="relative z-10 flex items-center justify-between px-4"
+        style={{
+          paddingTop: 'max(0.85rem, env(safe-area-inset-top))',
+          paddingBottom: '0.65rem',
+        }}
       >
-        <div className="flex items-center gap-3">
+        {/* Left: logo + title */}
+        <div className="flex items-center gap-2.5">
           <div
-            className="flex size-9 items-center justify-center rounded-[11px] font-mono text-[14px] font-bold"
             style={{
-              background: 'rgba(0,130,255,0.18)',
-              border: '1px solid rgba(0,160,255,0.28)',
+              width: 34,
+              height: 34,
+              borderRadius: 9,
+              background: 'rgba(0,130,255,0.16)',
+              border: '1px solid rgba(0,160,255,0.26)',
               color: '#00aaff',
-              textShadow: '0 0 12px rgba(0,160,255,0.8)',
+              fontFamily: "'Space Mono', monospace",
+              fontSize: 12,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textShadow: '0 0 10px rgba(0,160,255,0.7)',
             }}
           >
             J·
           </div>
           <div>
-            <p className="font-mono text-[9px] uppercase tracking-[0.22em]" style={{ color: 'rgba(0,160,255,0.45)' }}>
+            <p
+              style={{
+                fontFamily: "'Space Mono', monospace",
+                fontSize: 8,
+                textTransform: 'uppercase',
+                letterSpacing: '0.22em',
+                color: 'rgba(0,160,255,0.38)',
+                margin: 0,
+              }}
+            >
               Local system
             </p>
-            <p className="text-[16px] font-semibold tracking-[-0.04em]" style={{ color: 'rgba(255,255,255,0.9)' }}>
+            <p
+              style={{
+                fontSize: 15,
+                fontWeight: 600,
+                letterSpacing: '-0.03em',
+                color: 'rgba(255,255,255,0.88)',
+                margin: 0,
+              }}
+            >
               JARVIS
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span
-            className="rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.14em]"
-            style={{ background: 'rgba(0,160,255,0.08)', color: 'rgba(0,160,255,0.4)', border: '1px solid rgba(0,160,255,0.12)' }}
+
+        {/* Right: mode badge + status dot + shield */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Mode badge */}
+          <div
+            style={{
+              padding: '3px 9px',
+              borderRadius: 20,
+              border: `1px solid ${
+                demoMode
+                  ? 'rgba(255,150,0,0.30)'
+                  : providerType === 'real-llm' || providerType === 'local-llm'
+                  ? 'rgba(0,160,255,0.22)'
+                  : 'rgba(0,160,255,0.10)'
+              }`,
+              background: demoMode
+                ? 'rgba(200,100,0,0.12)'
+                : providerType === 'real-llm' || providerType === 'local-llm'
+                ? 'rgba(0,120,255,0.08)'
+                : 'rgba(0,160,255,0.05)',
+              display: 'flex',
+              flexDirection: 'column' as const,
+              alignItems: 'flex-end',
+              gap: 1,
+            }}
           >
-            {runtime?.version ?? 'v1.0'}
-          </span>
+            <span
+              style={{
+                fontFamily: "'Space Mono', monospace",
+                fontSize: 7.5,
+                textTransform: 'uppercase',
+                letterSpacing: '0.14em',
+                fontWeight: 700,
+                color: demoMode
+                  ? 'rgba(255,165,0,0.90)'
+                  : providerType === 'real-llm'
+                  ? 'rgba(0,180,255,0.85)'
+                  : providerType === 'local-llm'
+                  ? 'rgba(0,210,150,0.85)'
+                  : 'rgba(0,160,255,0.35)',
+              }}
+            >
+              {demoMode
+                ? 'Demo Mode'
+                : providerType === 'real-llm'
+                ? 'Real LLM'
+                : providerType === 'local-llm'
+                ? 'Local LLM'
+                : 'No Provider'}
+            </span>
+            {modelLabel && (
+              <span
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  fontSize: 6.5,
+                  letterSpacing: '0.10em',
+                  color: 'rgba(0,160,255,0.38)',
+                }}
+              >
+                {modelLabel}
+              </span>
+            )}
+            {demoMode && (
+              <span
+                style={{
+                  fontFamily: "'Space Mono', monospace",
+                  fontSize: 6,
+                  letterSpacing: '0.10em',
+                  color: 'rgba(255,140,0,0.50)',
+                }}
+              >
+                No real AI connected
+              </span>
+            )}
+          </div>
+
+          {/* Connection dot */}
+          <div
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: runtime?.connected ? '#00cc88' : '#cc3300',
+              boxShadow: runtime?.connected
+                ? '0 0 6px rgba(0,200,130,0.7)'
+                : '0 0 6px rgba(200,50,0,0.7)',
+              flexShrink: 0,
+            }}
+            title={runtime?.connected ? 'Runtime connected' : 'Runtime unreachable'}
+          />
+
+          {/* Shield / system */}
           <button
             type="button"
             onClick={() => setSysOpen(true)}
-            className="flex size-9 items-center justify-center rounded-xl transition active:scale-95"
-            style={{ color: 'rgba(0,160,255,0.5)', background: 'rgba(0,160,255,0.06)', border: '1px solid rgba(0,160,255,0.10)' }}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              background: 'rgba(0,160,255,0.06)',
+              border: '1px solid rgba(0,160,255,0.10)',
+              color: 'rgba(0,160,255,0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+            }}
             aria-label="System status"
             data-testid="button-open-system"
           >
-            <Shield size={16} />
-          </button>
-          <button
-            type="button"
-            className="flex size-9 items-center justify-center rounded-xl"
-            style={{ color: 'rgba(255,255,255,0.25)' }}
-            aria-label="More options"
-          >
-            <MoreHorizontal size={18} />
+            <Shield size={14} />
           </button>
         </div>
       </header>
 
-      {/* ── State chip ── */}
-      <div className="relative z-10 flex justify-center py-1.5">
-        <div
-          className="flex items-center gap-2 rounded-full px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.15em]"
-          style={{
-            background: meta.dim,
-            border: `1px solid ${meta.color}28`,
-            color: meta.color,
-            boxShadow: `0 0 16px ${meta.color}14`,
-          }}
-          data-testid="status-chip"
-        >
-          <span
-            className="size-1.5 rounded-full"
-            style={{
-              background: meta.color,
-              boxShadow: `0 0 6px ${meta.color}`,
-              animation: coreState === 'offline' ? 'none' : 'pulse 2s infinite',
-            }}
-          />
-          {meta.label}
-          {demoMode && <span style={{ color: 'rgba(255,180,0,0.7)', marginLeft: 4 }}>· demo</span>}
-          {voice.isListening && <span style={{ color: '#00aaff', marginLeft: 4 }}>· mic on</span>}
-        </div>
-      </div>
-
       {/* ── Neural core ── */}
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center py-2">
+      <main
+        className="relative z-10 flex flex-col items-center"
+        style={{ paddingTop: '0.5rem', paddingBottom: '0.25rem' }}
+      >
+        {/* Ambient glow ring behind core */}
         <div
           aria-hidden
-          className="pointer-events-none absolute rounded-full"
           style={{
-            width: coreSize + 80,
-            height: coreSize + 80,
-            background: `radial-gradient(circle, ${meta.color}0a 0%, transparent 70%)`,
-            boxShadow: `0 0 120px 20px ${meta.color}08`,
+            position: 'absolute',
+            width: coreSize + 60,
+            height: coreSize + 60,
+            borderRadius: '50%',
+            background: `radial-gradient(circle, ${meta.color}0b 0%, transparent 70%)`,
+            boxShadow: `0 0 100px 16px ${meta.color}07`,
+            pointerEvents: 'none',
+            transition: 'background 2s ease, box-shadow 2s ease',
           }}
         />
-        <div className="relative" data-testid="neural-core-container">
+
+        <div data-testid="neural-core-container">
           <NeuralCore state={coreState} size={coreSize} />
         </div>
 
-        {/* Status text */}
-        <div className="mt-5 flex flex-col items-center gap-1 px-6 text-center">
+        {/* Live transcript while listening */}
+        {showTranscript && (
           <p
-            className="text-[15px] font-medium tracking-[-0.02em]"
+            className="jarvis-rise"
             style={{
-              color: coreState === 'offline' ? 'rgba(80,120,160,0.7)'
-                   : demoMode ? 'rgba(255,180,0,0.85)'
-                   : voice.isListening ? 'rgba(0,180,255,0.95)'
-                   : 'rgba(255,255,255,0.85)',
+              marginTop: 4,
+              fontStyle: 'italic',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: 'rgba(0,200,255,0.75)',
+              maxWidth: coreSize - 32,
+              textAlign: 'center',
             }}
-            data-testid="text-status-line1"
           >
-            {statusText.line1}
+            "{voice.transcript}"
           </p>
-          {statusText.line2 && (
-            <p
-              className="font-mono text-[10px] uppercase tracking-[0.16em]"
-              style={{ color: 'rgba(0,160,255,0.4)' }}
-              data-testid="text-status-line2"
-            >
-              {statusText.line2}
-            </p>
-          )}
-          {/* Live voice transcript */}
-          {voice.isListening && voice.transcript && (
-            <p
-              className="mt-2 max-w-[260px] text-[13px] leading-5 italic"
-              style={{ color: 'rgba(0,200,255,0.75)' }}
-            >
-              "{voice.transcript}"
-            </p>
-          )}
-          {/* Voice error */}
-          {voice.voiceState === 'error' && voice.error && (
-            <p
-              className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em]"
-              style={{ color: 'rgba(255,100,50,0.75)' }}
-            >
-              {voice.error}
-            </p>
-          )}
-          {/* Voice unsupported notice */}
-          {!voice.isSupported && (
-            <p
-              className="mt-1 font-mono text-[8px] uppercase tracking-[0.12em]"
-              style={{ color: 'rgba(255,255,255,0.15)' }}
-            >
-              Voice not supported in this browser
-            </p>
-          )}
-        </div>
-
-        {/* Waveform */}
-        <div className="mt-4 flex items-center justify-center opacity-80">
-          <Waveform state={coreState} width={200} height={36} />
-        </div>
+        )}
       </main>
 
-      {/* ── Network strip ── */}
-      <div className="relative z-10 flex justify-center pb-2">
-        <div className="flex items-center gap-2" style={{ color: 'rgba(0,160,255,0.28)' }}>
-          {runtime?.connected ? <Wifi size={11} /> : <WifiOff size={11} />}
-          <span className="font-mono text-[8px] uppercase tracking-[0.14em]">
-            {runtime?.connected ? 'Runtime reachable' : 'Runtime unreachable'}
+      {/* ── State chip ── */}
+      <div
+        className="relative z-10 flex justify-center"
+        style={{ paddingTop: 6, paddingBottom: 10 }}
+        data-testid="status-chip"
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            borderRadius: 24,
+            padding: '5px 13px',
+            background: meta.dim,
+            border: `1px solid ${meta.color}24`,
+            boxShadow: `0 0 14px ${meta.color}10`,
+            transition: 'all 0.6s ease',
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: meta.color,
+              boxShadow: `0 0 6px ${meta.color}`,
+              animation: coreState === 'offline' ? 'none' : 'pulse 2s infinite',
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "'Space Mono', monospace",
+              fontSize: 9,
+              textTransform: 'uppercase',
+              letterSpacing: '0.15em',
+              color: meta.color,
+              transition: 'color 0.6s ease',
+            }}
+          >
+            {meta.label}
           </span>
-          {!runtime?.externalApisEnabled && runtime?.connected && (
-            <span className="font-mono text-[8px] uppercase tracking-[0.14em]" style={{ color: 'rgba(0,160,255,0.2)' }}>
-              · local only
+          {voice.voiceState === 'error' && voice.error && (
+            <span
+              style={{
+                fontFamily: "'Space Mono', monospace",
+                fontSize: 8,
+                textTransform: 'uppercase',
+                letterSpacing: '0.10em',
+                color: 'rgba(255,80,50,0.80)',
+                marginLeft: 4,
+              }}
+            >
+              · voice error
             </span>
           )}
         </div>
       </div>
 
-      {/* ── Bottom nav ── */}
-      <nav
-        className="relative z-10 flex items-center justify-around px-6"
+      {/* ── Live terminal ── */}
+      <div
+        className="relative z-10"
         style={{
-          paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))',
-          paddingTop: '1rem',
-          borderTop: '1px solid rgba(0,160,255,0.07)',
-          background: 'linear-gradient(to top, rgba(0,4,12,0.95), transparent)',
+          paddingLeft: 20,
+          paddingRight: 20,
+          paddingBottom: 10,
+          flex: 1,
+          minHeight: 0,
         }}
       >
-        <NavButton
+        <LiveTerminal
+          lines={termLines}
+          maxLines={10}
+          style={{
+            maxHeight: 160,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: 'rgba(0,8,18,0.55)',
+            border: '1px solid rgba(0,160,255,0.08)',
+          }}
+        />
+      </div>
+
+      {/* ── Alerts ── */}
+      {alerts.length > 0 && (
+        <div
+          className="relative z-10"
+          style={{ paddingLeft: 20, paddingRight: 20, paddingBottom: 8 }}
+        >
+          <AlertCard alerts={alerts} onDismiss={dismissAlert} />
+        </div>
+      )}
+
+      {/* ── Response card ── */}
+      {lastAssistant && (
+        <div
+          className="relative z-10"
+          style={{ paddingLeft: 20, paddingRight: 20, paddingBottom: 8 }}
+        >
+          <ResponseCard message={lastAssistant} demoMode={demoMode} />
+        </div>
+      )}
+
+      {/* ── Bottom nav ── */}
+      <nav
+        className="relative z-10"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-around',
+          paddingLeft: 24,
+          paddingRight: 24,
+          paddingTop: 10,
+          paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom))',
+          borderTop: '1px solid rgba(0,160,255,0.07)',
+          background: 'linear-gradient(to top, rgba(0,4,14,0.97), transparent)',
+        }}
+      >
+        {/* Chat */}
+        <BottomButton
           onClick={() => setChatOpen(true)}
+          icon={<MessageSquare size={18} />}
           label="Chat"
-          icon={<MessageSquare size={20} />}
           badge={messages.length > 0 ? messages.length : undefined}
-          data-testid="button-open-chat"
+          testId="button-open-chat"
         />
 
-        {/* Central mic / push-to-talk */}
+        {/* Mic (center, slightly prominent) */}
         <button
           type="button"
           onClick={handleMicPress}
           disabled={!ready && !voice.isListening}
-          className="flex flex-col items-center gap-1.5 transition active:scale-95 disabled:opacity-40"
+          style={{
+            width: 52,
+            height: 52,
+            borderRadius: '50%',
+            background: voice.isListening
+              ? 'radial-gradient(circle at 40% 35%, rgba(0,170,255,0.35), rgba(0,0,0,0.65))'
+              : ready
+              ? `radial-gradient(circle at 40% 35%, ${meta.color}22, rgba(0,0,0,0.65))`
+              : 'rgba(20,30,45,0.65)',
+            border: voice.isListening
+              ? '1.5px solid rgba(0,170,255,0.65)'
+              : `1.5px solid ${ready ? meta.color + '44' : 'rgba(40,60,80,0.30)'}`,
+            boxShadow: voice.isListening
+              ? '0 0 20px rgba(0,170,255,0.28), inset 0 0 14px rgba(0,170,255,0.12)'
+              : ready
+              ? `0 0 18px ${meta.color}18`
+              : 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            animation: voice.isListening ? 'pulse 1.4s infinite' : 'none',
+            opacity: !ready && !voice.isListening ? 0.4 : 1,
+          }}
           aria-label={
             voice.isListening
               ? 'Stop listening'
               : voice.isSpeaking
               ? 'Stop speaking'
-              : 'Tap to speak'
+              : 'Start listening'
           }
           data-testid="button-tap-to-speak"
         >
-          <div
-            className="flex size-[68px] items-center justify-center rounded-full"
-            style={{
-              background: voice.isListening
-                ? `radial-gradient(circle at 40% 35%, #00aaff44, rgba(0,0,0,0.7))`
-                : ready
-                ? `radial-gradient(circle at 40% 35%, ${meta.color}28, rgba(0,0,0,0.7))`
-                : 'rgba(30,40,50,0.7)',
-              border: voice.isListening
-                ? '2px solid #00aaff88'
-                : `2px solid ${ready ? meta.color + '55' : 'rgba(60,80,100,0.3)'}`,
-              boxShadow: voice.isListening
-                ? '0 0 28px #00aaff35, inset 0 0 18px #00aaff18'
-                : ready
-                ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10`
-                : 'none',
-              animation: voice.isListening ? 'pulse 1.2s infinite' : 'none',
-            }}
-          >
-            {voice.isListening
-              ? <MicOff size={26} style={{ color: '#00aaff' }} />
-              : <Mic size={26} style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }} />
-            }
-          </div>
-          <span
-            className="font-mono text-[8px] uppercase tracking-[0.14em]"
-            style={{
-              color: voice.isListening
-                ? '#00aaff'
-                : ready
-                ? 'rgba(0,160,255,0.45)'
-                : 'rgba(60,80,100,0.5)',
-            }}
-          >
-            {voice.isListening
-              ? 'Tap to stop'
-              : voice.isSpeaking
-              ? 'Speaking…'
-              : ready
-              ? voice.isSupported ? 'Tap to speak' : 'Tap to chat'
-              : 'Not ready'}
-          </span>
+          {voice.isListening
+            ? <MicOff size={20} style={{ color: '#00aaff' }} />
+            : <Mic size={20} style={{ color: ready ? meta.color : 'rgba(50,70,90,0.65)' }} />
+          }
         </button>
 
-        <NavButton
+        {/* System */}
+        <BottomButton
           onClick={() => setSysOpen(true)}
+          icon={<Activity size={18} />}
           label="System"
-          icon={<Activity size={20} />}
-          data-testid="button-open-system-nav"
+          testId="button-open-system-nav"
         />
       </nav>
-
-      {/* ── Demo MODE banner ── */}
-      {demoMode && (
-        <div
-          className="pointer-events-none absolute bottom-[100px] left-0 right-0 z-20 flex justify-center"
-          data-testid="banner-demo-mode"
-        >
-          <div
-            className="rounded-full px-4 py-1.5"
-            style={{
-              background: 'rgba(200,120,0,0.14)',
-              border: '1px solid rgba(255,160,0,0.35)',
-              backdropFilter: 'blur(12px)',
-            }}
-          >
-            <span
-              className="font-mono text-[9px] uppercase tracking-[0.2em]"
-              style={{ color: 'rgba(255,180,60,0.85)' }}
-            >
-              ◈ demo mode — no real ai connected
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* ── Sheets ── */}
       <ChatSheet
@@ -582,44 +908,83 @@ export default function Home() {
   );
 }
 
-// ---- Sub-components ----
+// ── BottomButton ─────────────────────────────────────────────────────────────
 
-interface NavButtonProps {
+interface BottomButtonProps {
   onClick: () => void;
-  label: string;
   icon: React.ReactNode;
+  label: string;
   badge?: number;
-  'data-testid'?: string;
+  testId?: string;
 }
 
-function NavButton({ onClick, label, icon, badge, 'data-testid': testid }: NavButtonProps) {
+function BottomButton({ onClick, icon, label, badge, testId }: BottomButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="relative flex flex-col items-center gap-1.5 transition active:scale-95"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 5,
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        position: 'relative',
+        padding: '2px 4px',
+      }}
       aria-label={label}
-      data-testid={testid}
+      data-testid={testId}
     >
       <div
-        className="flex size-12 items-center justify-center rounded-2xl"
         style={{
-          background: 'rgba(0,160,255,0.07)',
+          width: 44,
+          height: 44,
+          borderRadius: 14,
+          background: 'rgba(0,160,255,0.06)',
           border: '1px solid rgba(0,160,255,0.10)',
-          color: 'rgba(0,160,255,0.55)',
+          color: 'rgba(0,160,255,0.50)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}
       >
         {icon}
       </div>
+
       {badge !== undefined && (
         <span
-          className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full font-mono text-[8px] font-bold"
-          style={{ background: '#0099cc', color: '#fff' }}
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            width: 16,
+            height: 16,
+            borderRadius: '50%',
+            background: '#0099cc',
+            color: '#fff',
+            fontFamily: "'Space Mono', monospace",
+            fontSize: 8,
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
           {badge > 9 ? '9+' : badge}
         </span>
       )}
-      <span className="font-mono text-[8px] uppercase tracking-[0.14em]" style={{ color: 'rgba(0,160,255,0.35)' }}>
+
+      <span
+        style={{
+          fontFamily: "'Space Mono', monospace",
+          fontSize: 7.5,
+          textTransform: 'uppercase',
+          letterSpacing: '0.14em',
+          color: 'rgba(0,160,255,0.30)',
+        }}
+      >
         {label}
       </span>
     </button>

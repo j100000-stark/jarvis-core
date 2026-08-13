@@ -4,3 +4,4 @@
 - [Voice hook](voice-hook.md) — useVoice uses self-declared Web Speech API types (not lib.dom); isSupportedBrowser guards all calls; speak() auto-cancels recognition first.
 - [CoreState](core-state.md) — NeuralCore + Waveform + STATE_META all require `executing` entry; adding a new CoreState requires updating all three.
 - [ElevenLabs TTS](tts-elevenlabs.md) — server-side proxy at /api/tts; API key stays in Node process.env; frontend falls back to SpeechSynthesis on error.
+- [Cinematic UI V2](cinematic-ui-v2.md) — operating console redesign: LiveTerminal, AlertCard, ResponseCard, terminal event system, alert pulse, layout rules.
