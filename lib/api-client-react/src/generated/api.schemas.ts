@@ -76,6 +76,7 @@ export type JarvisNetworkStateConnectivity = typeof JarvisNetworkStateConnectivi
 
 
 export const JarvisNetworkStateConnectivity = {
+  unknown: 'unknown',
   online: 'online',
   degraded: 'degraded',
   offline: 'offline',

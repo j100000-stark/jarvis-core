@@ -80,7 +80,7 @@ export const GetJarvisSystemResponse = zod.object({
   "details": zod.string()
 })),
   "network": zod.object({
-  "connectivity": zod.enum(['online', 'degraded', 'offline', 'local_only', 'recovering']),
+  "connectivity": zod.enum(['unknown', 'online', 'degraded', 'offline', 'local_only', 'recovering']),
   "reachableHosts": zod.array(zod.string()),
   "unreachableHosts": zod.array(zod.string()),
   "details": zod.string()

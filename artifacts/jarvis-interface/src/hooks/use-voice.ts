@@ -312,6 +312,14 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
         setTranscript("");
         return;
       }
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        // Permission failure — a distinct, actionable state; NEVER a
+        // generic restart (spec §4). The UI must show PERMISSION_REQUIRED.
+        setError("MICROPHONE_PERMISSION_REQUIRED");
+        setVoiceState("error");
+        setTranscript("");
+        return;
+      }
       setError(`Voice error: ${event.error}`);
       setVoiceState("error");
       setTranscript("");

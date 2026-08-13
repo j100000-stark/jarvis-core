@@ -52,6 +52,8 @@ import { ErrorDetailCard, type ExecutionDiagnostic } from '@/components/jarvis/e
 import { ResponseCard } from '@/components/jarvis/response-card';
 import { useVoice, type TTSStage, type MicPermission } from '@/hooks/use-voice';
 import { useWakeWord } from '@/hooks/use-wake-word';
+import { useBackendWatchdog, type WatchdogEvent } from '@/hooks/use-backend-watchdog';
+import { useQueryClient } from '@tanstack/react-query';
 
 // ── Provider helpers ─────────────────────────────────────────────────────────
 
@@ -281,13 +283,72 @@ export default function Home() {
         case 'RECOGNITION_CREATED': pushLine('RECOGNITION', 'CREATED', 'normal'); break;
         case 'RECOGNITION_STARTED': pushLine('RECOGNITION', 'STARTED', 'info'); break;
         case 'RECOGNITION_RESULT':  pushLine('RECOGNITION', 'RESULT', 'normal'); break;
-        case 'RECOGNITION_ERROR':   pushLine('RECOGNITION', `ERROR ${detail ?? ''}`.trim().toUpperCase().slice(0, 40), 'warning'); break;
+        case 'RECOGNITION_ERROR':
+          if (detail === 'not-allowed' || detail === 'service-not-allowed') {
+            // Permission failure — surface the actionable state and stop the
+            // wake loop (the hook already halts; disabling via micPermission
+            // prevents any silent restart). Spec §2/§4.
+            pushLine('MICROPHONE', 'PERMISSION_REQUIRED', 'error');
+            pushLine('RECOGNITION', 'BLOCKED', 'error');
+            setMicPermission('denied');
+            pushAlert(
+              'Microphone Permission Required',
+              'Safari blocked speech recognition. Allow Microphone access for this site in Safari settings, then tap the mic button to reactivate.',
+              'warning',
+            );
+          } else {
+            pushLine('RECOGNITION', `ERROR ${detail ?? ''}`.trim().toUpperCase().slice(0, 40), 'warning');
+          }
+          break;
         case 'RECOGNITION_END':     pushLine('WAKE WORD', 'INTERRUPTED', 'normal'); break;
         case 'RECOGNITION_RESTART': pushLine('RECOGNITION', 'RESTARTING', 'normal'); break;
         case 'WAKE_WORD_DETECTED':  pushLine('WAKE WORD', 'DETECTED', 'success'); break;
         default: break;
       }
     }, [pushLine]),
+  });
+
+  // ── Backend watchdog — automatic reconnect after workflow restart (§9) ────
+  const queryClient = useQueryClient();
+  useBackendWatchdog({
+    onEvent: useCallback((event: WatchdogEvent, detail?: string) => {
+      switch (event) {
+        case 'BACKEND_OFFLINE':
+          pushLine('BACKEND', 'OFFLINE', 'error');
+          pushAlert('Backend Offline', 'Connection lost — reconnecting automatically.', 'error');
+          triggerAlertPulse();
+          break;
+        case 'RECONNECTING':          pushLine('RECONNECTING', (detail ?? '').toUpperCase() || 'IN PROGRESS', 'warning'); break;
+        case 'HEALTH_CHECK':          pushLine('HEALTH CHECK', 'PROBING', 'normal'); break;
+        case 'BACKEND_ONLINE':
+          pushLine('BACKEND', 'ONLINE', 'success');
+          setAlerts((prev) => prev.filter((a) => !a.title.toLowerCase().includes('backend offline')));
+          break;
+        case 'RECONNECTING_SERVICES': pushLine('RECONNECTING', 'SERVICES', 'info'); break;
+        case 'JARVIS_READY':          pushLine('JARVIS', 'READY', 'success'); break;
+        default: break;
+      }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pushLine, pushAlert, triggerAlertPulse]),
+    onRecovered: useCallback(() => {
+      // Read-only state restoration — refetch GET queries only; pending POST
+      // requests are NEVER replayed (no duplicated goals).
+      queryClient.invalidateQueries({ queryKey: getGetJarvisStatusQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getHealthCheckQueryKey() });
+      // Recognition reset: fully restart the wake loop — `enabled` may not
+      // have toggled during the outage, so pause alone would never re-arm.
+      wakeWord.restart();
+      // TTS reset: cancel any stuck playback and re-verify synthesis honestly.
+      voice.cancelSpeaking();
+      fetch('/api/tts/health')
+        .then((r) => r.json())
+        .then((h: { ready?: boolean; category?: string }) => {
+          if (h.ready) pushLine('VOICE', 'READY', 'success');
+          else pushLine('VOICE', `BROWSER FALLBACK (${(h.category ?? 'UNKNOWN').replace(/^TTS_/, '')})`, 'warning');
+        })
+        .catch(() => pushLine('VOICE', 'STATUS UNKNOWN', 'warning'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [queryClient, pushLine]),
   });
 
   // ── Transition refs (for detecting state changes) ─────────────────────────
@@ -394,13 +455,9 @@ export default function Home() {
     }
   }, [runtime?.providerName, pushLine]);
 
-  // ── API health error events ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!health.isError) return;
-    pushLine('HEALTH CHECK', 'FAILED', 'error');
-    triggerAlertPulse();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [health.isError]);
+  // NOTE: backend outage reporting is owned exclusively by the watchdog
+  // (single source of truth) — react-query health polling errors are not
+  // separately surfaced to the terminal to avoid contradictory lines.
 
   // ── STT listening transitions ─────────────────────────────────────────────
   useEffect(() => {
@@ -466,7 +523,19 @@ export default function Home() {
   // ── Voice error events ────────────────────────────────────────────────────
   useEffect(() => {
     if (voice.voiceState !== 'error' || !voice.error) return;
-    pushLine('VOICE', 'ERROR', 'error');
+    if (voice.error === 'MICROPHONE_PERMISSION_REQUIRED') {
+      // Distinct, actionable permission state (spec §4) — never a generic error.
+      pushLine('MICROPHONE', 'PERMISSION_REQUIRED', 'error');
+      pushLine('RECOGNITION', 'BLOCKED', 'error');
+      setMicPermission('denied');
+      pushAlert(
+        'Microphone Permission Required',
+        'Safari blocked speech recognition. Open Settings → Safari (or the aA menu → Website Settings) and allow Microphone for this site, then tap the mic button.',
+        'warning',
+      );
+    } else {
+      pushLine('VOICE', 'ERROR', 'error');
+    }
     triggerAlertPulse();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice.voiceState, voice.error]);

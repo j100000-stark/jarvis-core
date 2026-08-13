@@ -64,7 +64,7 @@ export type JarvisSystemReport = {
     details: string;
   }>;
   network: {
-    connectivity: "online" | "degraded" | "offline" | "local_only" | "recovering";
+    connectivity: "unknown" | "online" | "degraded" | "offline" | "local_only" | "recovering";
     reachableHosts: string[];
     unreachableHosts: string[];
     details: string;

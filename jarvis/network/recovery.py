@@ -150,7 +150,9 @@ class NetworkRecoveryManager:
         self._max_reconnect_attempts = max_reconnect_attempts
         self._base_backoff_seconds = base_backoff_seconds
         self._reconnect_attempts = 0
-        self._connectivity = NetworkConnectivity.OFFLINE
+        # UNKNOWN until the first real probe — OFFLINE is only ever the
+        # result of a live probe that found no reachable hosts.
+        self._connectivity = NetworkConnectivity.UNKNOWN
         self._events: list[str] = []
         self._base_manager = NetworkManager(policy)
         self._local_only_forced = False

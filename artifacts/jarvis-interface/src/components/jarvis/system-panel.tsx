@@ -219,6 +219,8 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function ConnectivityBadge({ value }: { value: string }) {
   const colorMap: Record<string, string> = {
+    // UNKNOWN = no live probe yet — neutral, never styled as a failure
+    unknown: 'border-[hsl(var(--muted-foreground)/.4)] bg-[hsl(var(--muted)/.5)] text-[hsl(var(--muted-foreground))]',
     online: 'border-[hsl(var(--accent)/.5)] bg-[hsl(var(--accent)/.1)] text-[hsl(78_58%_30%)]',
     degraded: 'border-[hsl(34_77%_57%/.5)] bg-[hsl(34_77%_57%/.1)] text-[hsl(34_77%_35%)]',
     offline: 'border-[hsl(var(--destructive)/.4)] bg-[hsl(var(--destructive)/.08)] text-[hsl(var(--destructive))]',

@@ -307,6 +307,17 @@ export function useWakeWord({ enabled, onWake, onStatusChange, onLifecycle }: Us
     }
   }, [setAndReport, stop, emit]);
 
+  /**
+   * Full restart: release any current session, clear the failure budget,
+   * and start again immediately if still enabled. Use after external
+   * recovery events (e.g. backend reconnect) where `enabled` may not have
+   * toggled, so the enabled-effect alone would never re-arm the loop.
+   */
+  const restart = useCallback(() => {
+    pause();
+    if (enabledRef.current) start();
+  }, [pause, start]);
+
   useEffect(() => {
     enabledRef.current = enabled;
     if (enabled) {
@@ -319,7 +330,7 @@ export function useWakeWord({ enabled, onWake, onStatusChange, onLifecycle }: Us
     return stop;
   }, [enabled, start, stop, setAndReport]);
 
-  return { status, pause };
+  return { status, pause, restart };
 }
 
 export type { WakeWordStatus, WakeWordLifecycleEvent };

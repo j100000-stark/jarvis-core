@@ -1,0 +1,350 @@
+We now have three concrete issues visible in the live iOS interface. Diagnose and fix them systematically. Do not hide, suppress, or fake any status.
+
+==================================================
+1. ELEVENLABS TTS — HTTP 402
+==================================================
+
+The live system reports:
+
+ELEVENLABS ........ TESTING SYNTHESIS
+ELEVENLABS ........ ERROR 402
+TTS ............... QUOTA_OR_BILLING
+VOICE ............. BROWSER_FALLBACK_ONLY
+
+This means the ElevenLabs upstream is rejecting the request because of quota/billing.
+
+First inspect the complete ElevenLabs integration and determine exactly why the request returns 402.
+
+Capture and safely log the upstream response category/status without exposing API keys.
+
+The system must distinguish:
+
+ELEVENLABS ONLINE
+ELEVENLABS QUOTA EXCEEDED
+ELEVENLABS BILLING REQUIRED
+ELEVENLABS AUTHENTICATION ERROR
+ELEVENLABS NETWORK ERROR
+
+Do not report ElevenLabs as healthy when synthesis actually fails.
+
+If ElevenLabs is unavailable, browser TTS fallback is allowed, but the UI must clearly say:
+
+TTS FALLBACK
+REASON: ELEVENLABS_UNAVAILABLE
+
+Do not treat browser fallback as a successful ElevenLabs synthesis.
+
+Also make the TTS pipeline robust:
+
+TTS REQUESTING
+TTS RESPONSE RECEIVED
+TTS PLAYING
+TTS ENDED
+
+or, on failure:
+
+TTS REQUESTING
+TTS FAILED
+TTS FALLBACK
+TTS FALLBACK PLAYING
+
+==================================================
+2. iOS SPEECH RECOGNITION — ERROR NOT-ALLOWED
+==================================================
+
+The live terminal reports:
+
+RECOGNITION ........ ERROR NOT-ALLOWED
+
+This is currently preventing the "Jarvis" wake word from working.
+
+Do a complete diagnosis of the browser SpeechRecognition permission/lifecycle.
+
+Inspect:
+
+- microphone permission handling
+- navigator.mediaDevices permissions where available
+- SpeechRecognition availability
+- webkitSpeechRecognition availability
+- Safari/iOS behavior
+- recognition lifecycle
+- onstart
+- onaudiostart
+- onsoundstart
+- onspeechstart
+- onresult
+- onspeechend
+- onsoundend
+- onend
+- onerror
+
+Do not assume that onresult with isFinal=true will always fire on iOS.
+
+Do not silently restart when the error is "not-allowed".
+
+When the browser denies microphone/speech recognition, show a real user-facing state:
+
+MICROPHONE PERMISSION REQUIRED
+
+and provide a clear action/instruction for granting microphone access.
+
+On first launch, the application should explicitly initialize microphone access through a user gesture when required by iOS Safari.
+
+Do not attempt to secretly activate the microphone.
+
+==================================================
+3. WAKE WORD — JARVIS
+==================================================
+
+After microphone permission is available, implement a reliable wake-word state machine.
+
+Desired behavior:
+
+APPLICATION READY
+↓
+WAKE LISTENING
+↓
+user says "Jarvis"
+↓
+WAKE WORD DETECTED
+↓
+COMMAND LISTENING
+↓
+user speaks command
+↓
+SILENCE DETECTED
+↓
+COMMAND SUBMITTED
+↓
+GROQ
+↓
+RESPONSE
+↓
+TTS
+
+The user must NOT need to press the microphone button after saying "Jarvis".
+
+Support:
+
+"Jarvis"
+"Hey Jarvis"
+"Jarvis ci sei"
+"Ehi Jarvis"
+"Jarvis sei lì"
+
+Normalize transcripts before matching:
+
+- lowercase
+- trim
+- punctuation removal
+- whitespace normalization
+- accent normalization
+
+Do not require isFinal for wake-word detection.
+
+Use interim recognition results where possible.
+
+After detecting the wake word, remove the wake phrase from the command.
+
+Example:
+
+"Jarvis che tempo fa oggi?"
+
+becomes:
+
+"che tempo fa oggi?"
+
+Never send the wake word itself to the LLM.
+
+==================================================
+4. MICROPHONE / RECOGNITION STATE MACHINE
+==================================================
+
+There must never be multiple active recognition instances.
+
+Create one explicit state machine:
+
+IDLE
+PERMISSION_REQUIRED
+WAKE_LISTENING
+COMMAND_LISTENING
+PROCESSING
+ERROR
+
+Every transition must be deterministic.
+
+On recognition error:
+
+NOT_ALLOWED
+NO_SPEECH
+AUDIO_CAPTURE
+NETWORK
+ABORT
+UNKNOWN
+
+log the exact error.
+
+Do NOT convert every error into a generic "restart".
+
+For NOT_ALLOWED specifically:
+
+MICROPHONE ........ PERMISSION_REQUIRED
+RECOGNITION ....... BLOCKED
+
+and wait for the user to grant permission.
+
+Once permission is granted, allow the user to initialize recognition again.
+
+==================================================
+5. NETWORK STATUS
+==================================================
+
+The System Status screen currently reports:
+
+NETWORK
+Connectivity
+OFFLINE
+Last-known network state (no live probe on this call).
+
+This is misleading.
+
+Implement three states:
+
+UNKNOWN
+ONLINE
+OFFLINE
+
+If no live network check has happened:
+
+NETWORK ........ UNKNOWN
+
+If a live health probe succeeds:
+
+NETWORK ........ ONLINE
+
+If a live health probe fails:
+
+NETWORK ........ OFFLINE
+
+Never display OFFLINE simply because there is no live probe.
+
+Also keep these statuses independent:
+
+NETWORK
+GROQ
+ELEVENLABS
+MICROPHONE
+RECOGNITION
+TTS
+
+For example, the system can legitimately show:
+
+NETWORK ........ ONLINE
+GROQ ........... CONNECTED
+ELEVENLABS ..... QUOTA/BILLING ERROR
+MICROPHONE ..... READY
+RECOGNITION .... PERMISSION_REQUIRED
+TTS ............ BROWSER_FALLBACK
+
+==================================================
+6. SELF-REPAIR
+==================================================
+
+Do NOT make self-repair simply toggle configuration flags.
+
+When a real failure occurs, Self-Repair must produce a complete diagnostic record:
+
+FAILURE DETECTED
+COMPONENT
+ERROR TYPE
+ROOT CAUSE
+EVIDENCE
+FILES INVOLVED
+PROPOSED REPAIR
+REPAIR ACTION
+FILES MODIFIED
+TESTS RUN
+TEST RESULTS
+RETRY RESULT
+
+Example:
+
+SELF-REPAIR
+Component: SpeechRecognition
+Error: NOT_ALLOWED
+Root cause: microphone permission/session initialization failure
+Evidence: Safari recognition returned not-allowed
+Repair: rebuild recognition lifecycle and permission handling
+Tests: ...
+Result: ...
+
+Never claim a repair succeeded unless tests and/or a real runtime verification confirm it.
+
+==================================================
+7. AI-ASSISTED CODE REPAIR
+==================================================
+
+For corrupted or broken source code, design the repair system so that a separate repair model can be used later.
+
+Do NOT immediately allow an AI to blindly overwrite arbitrary source files.
+
+Create a safe repair pipeline:
+
+failure
+→ diagnosis
+→ identify relevant files
+→ generate proposed patch
+→ validate patch
+→ run tests/type checks
+→ apply patch only if validation succeeds
+→ restart affected service
+→ runtime verification
+→ record incident
+
+Keep the repair model/provider configurable through environment variables.
+
+The primary JARVIS model should remain responsible for normal reasoning.
+
+The repair model should only be invoked for code-repair tasks.
+
+Add a dry-run mode so repairs can be inspected without being applied.
+
+==================================================
+8. FINAL VERIFICATION
+==================================================
+
+After implementing everything:
+
+- run the complete Python test suite
+- run TypeScript checks
+- restart workflows
+- verify the running application
+- test microphone permission
+- test "Jarvis"
+- test a complete spoken command
+- test TTS
+- test ElevenLabs failure fallback
+- test network status
+
+Do not report "fixed" based only on unit tests.
+
+Report the exact runtime sequence observed.
+
+The target healthy sequence is:
+
+MICROPHONE .... READY
+RECOGNITION ... STARTED
+WAKE WORD ...... ACTIVE
+RECOGNITION ... RESULT
+WAKE WORD ...... DETECTED
+LISTENING ...... ACTIVE
+SPEECH ......... RESULT
+SILENCE ........ DETECTED
+REQUEST ........ SENT
+GROQ ........... PROCESSING
+RESPONSE ....... GENERATED
+TTS ............ REQUESTING
+TTS ............ PLAYING
+TTS ............ ENDED
+
+If any step fails, stop claiming success and report the exact failure.

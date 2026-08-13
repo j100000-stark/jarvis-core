@@ -145,6 +145,9 @@ class HealthStatus:
 class NetworkConnectivity(StrEnum):
     """Observable network connectivity states."""
 
+    # UNKNOWN means no live probe has run yet — never report OFFLINE
+    # merely because connectivity was not measured (spec: truthful status).
+    UNKNOWN = "unknown"
     ONLINE = "online"
     DEGRADED = "degraded"
     OFFLINE = "offline"

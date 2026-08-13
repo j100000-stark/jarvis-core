@@ -411,13 +411,19 @@ class Assistant:
             for s in health_statuses
         ]
 
-        # Network — return last-known state without blocking probe
+        # Network — return last-known state without blocking probe.
+        # UNKNOWN is reported honestly when no live probe has run yet;
+        # OFFLINE is only ever shown as the result of a real failed probe.
         net = self.network_recovery.connectivity
         network = {
             "connectivity": net.value,
             "reachableHosts": [],
             "unreachableHosts": [],
-            "details": "Last-known network state (no live probe on this call).",
+            "details": (
+                "No live network probe has run yet — state is UNKNOWN."
+                if net.value == "unknown"
+                else "Last-known network state from the most recent live probe."
+            ),
         }
 
         # Recovery incidents from crash recovery

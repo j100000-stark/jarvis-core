@@ -35,6 +35,14 @@ class RepairResult:
     message: str
     # New Settings instance if settings were patched during repair.
     repaired_settings: object = None
+    # ── Full diagnostic record (spec: never a bare flag toggle) ──────────
+    component: str = ""          # subsystem the failure belongs to
+    root_cause: str = ""         # diagnosed root cause, sanitized
+    evidence: str = ""           # sanitized failure message / observation
+    files_involved: tuple[str, ...] = ()
+    proposed_repair: str = ""    # what strategy was chosen and why
+    tests_run: tuple[str, ...] = ()
+    test_results: str = ""       # honest outcome; "" when no tests ran
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────
@@ -90,6 +98,7 @@ class SelfRepairManager:
         self._attempts += 1
         failure_type = self._classify(failure_message, failure_step)
         result = self._repair(failure_type, failure_message, goal, settings, registry)
+        result = self._enrich_diagnostics(result, failure_message, failure_step)
         self._record(result, goal)
         return result
 
@@ -99,6 +108,68 @@ class SelfRepairManager:
     def reset_attempts(self) -> None:
         """Reset attempt counter — call between independent user goals."""
         self._attempts = 0
+
+    # ── Diagnostics enrichment (spec: full diagnostic record) ───────────────
+
+    _COMPONENT_MAP = {
+        "tts_": "TextToSpeech",
+        "web_research": "WebResearch",
+        "tool_not_found": "ToolRegistry",
+        "cloudflare_blocked": "LLMTransport",
+        "auth_error": "LLMTransport",
+        "rate_limited": "LLMTransport",
+        "timeout": "Network",
+        "network_error": "Network",
+        "llm_error": "LLMBrain",
+    }
+
+    def _enrich_diagnostics(
+        self, result: RepairResult, failure_message: str, failure_step: str | None
+    ) -> RepairResult:
+        """Fill the diagnostic-record fields so every incident is complete.
+
+        Never overwrites values a strategy set explicitly; evidence is
+        always sanitized before storage.
+        """
+        from dataclasses import replace
+
+        component = result.component
+        if not component:
+            component = "Unknown"
+            for prefix, name in self._COMPONENT_MAP.items():
+                if result.failure_type.startswith(prefix) or result.failure_type == prefix:
+                    component = name
+                    break
+
+        evidence = result.evidence or self._sanitize(failure_message[:300])
+        if failure_step:
+            evidence = f"step={failure_step}: {evidence}"
+        root_cause = result.root_cause or (
+            result.actions[0] if result.actions else result.message
+        )
+        proposed = result.proposed_repair or next(
+            (a for a in result.actions if a.lower().startswith(("strategy", "repair", "fix"))),
+            result.message,
+        )
+        return replace(
+            result,
+            component=component,
+            root_cause=root_cause,
+            evidence=evidence,
+            proposed_repair=proposed,
+            test_results=result.test_results
+            or ("" if result.tests_run else "no automated tests executed for this repair"),
+        )
+
+    @staticmethod
+    def _sanitize(text: str) -> str:
+        """Redact anything that looks like a secret/token from diagnostics."""
+        try:
+            from ..diagnostics import _redact_env_values  # type: ignore[attr-defined]
+            return _redact_env_values(text)
+        except Exception:
+            import re as _re
+            return _re.sub(r"[A-Za-z0-9_\-]{32,}", "[REDACTED]", text)
 
     # ── Classification ──────────────────────────────────────────────────────
 
@@ -366,6 +437,14 @@ class SelfRepairManager:
             "success": result.success,
             "actions": result.actions,
             "message": result.message,
+            # Full diagnostic record (spec §6)
+            "component": result.component,
+            "root_cause": result.root_cause,
+            "evidence": result.evidence,
+            "files_involved": list(result.files_involved),
+            "proposed_repair": result.proposed_repair,
+            "tests_run": list(result.tests_run),
+            "test_results": result.test_results,
             "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         }
         self._incidents.append(incident)

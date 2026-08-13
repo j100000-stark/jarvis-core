@@ -236,7 +236,7 @@ components:
       properties:
         connectivity:
           type: string
-          enum: [online, degraded, offline, local_only, recovering]
+          enum: [unknown, online, degraded, offline, local_only, recovering]
         reachableHosts:
           type: array
           items:
