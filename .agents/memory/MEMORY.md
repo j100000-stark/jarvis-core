@@ -6,3 +6,4 @@
 - [ElevenLabs TTS](tts-elevenlabs.md) — server-side proxy at /api/tts; API key stays in Node process.env; frontend falls back to SpeechSynthesis on error.
 - [Cinematic UI V2](cinematic-ui-v2.md) — operating console redesign: LiveTerminal, AlertCard, ResponseCard, terminal event system, alert pulse, layout rules.
 - [Structured error pipeline](structured-error-pipeline.md) — diagnostics module, error field through the full type chain, ErrorDetailCard UI, secret redaction.
+- [Groq Cloudflare block](groq-cloudflare-ua.md) — Python urllib default UA triggers CF 1010 on Groq; fix is User-Agent: groq-python/0.11.0 in OpenAICompatibleTransport.

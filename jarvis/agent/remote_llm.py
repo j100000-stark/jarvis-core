@@ -116,6 +116,12 @@ class OpenAICompatibleTransport:
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
+                # A recognised API-client User-Agent is required.  Without it
+                # Cloudflare (which fronts Groq and several other providers)
+                # returns 403 error-code 1010 before the request ever reaches
+                # the provider's own servers.  Python's default urllib UA
+                # ("Python-urllib/3.x") triggers that block.
+                "User-Agent": "groq-python/0.11.0",
             },
             method="POST",
         )
@@ -123,8 +129,15 @@ class OpenAICompatibleTransport:
             with urlopen(request, timeout=timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
         except HTTPError as error:
+            # Read the response body so diagnostics are meaningful.
+            # HTTPError.read() can only be called once and may raise; guard it.
+            try:
+                error_body = error.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = ""
+            detail = f" — {error_body[:300]}" if error_body.strip() else ""
             raise RemoteLLMConnectionError(
-                f"LLM API returned HTTP {error.code}: {error.reason}"
+                f"LLM API returned HTTP {error.code}: {error.reason}{detail}"
             ) from error
         except (URLError, TimeoutError, OSError) as error:
             raise RemoteLLMConnectionError(
