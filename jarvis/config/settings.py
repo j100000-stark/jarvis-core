@@ -39,7 +39,16 @@ class Settings:
 
     @classmethod
     def from_environment(cls, memory_file: str | None = None) -> "Settings":
-        """Build Settings from JARVIS_* environment variables."""
+        """Build Settings from JARVIS_* environment variables.
+
+        Precedence: environment variable > runtime_config.json overlay > default.
+        The overlay (data/runtime_config.json) is the authoritative persistent
+        source for configuration repairs — apply_to_environ() fills only keys
+        the operator has not explicitly set in the environment.
+        """
+        from .config_store import ConfigStore
+        ConfigStore().apply_to_environ()
+
         data_dir_str = os.environ.get("JARVIS_DATA_DIR", "data")
         data_dir = Path(data_dir_str)
         default_memory = data_dir / "memory.json"
@@ -74,7 +83,7 @@ class Settings:
             llm_provider=os.environ.get("JARVIS_LLM_PROVIDER", "openai"),
             llm_model=os.environ.get("JARVIS_LLM_MODEL", "gpt-4o-mini"),
             web_research_enabled=_boolean(
-                os.environ.get("JARVIS_WEB_RESEARCH_ENABLED"), False
+                os.environ.get("JARVIS_WEB_RESEARCH_ENABLED"), True
             ),
             network_probe_timeout_seconds=_positive_float(
                 os.environ.get("JARVIS_NETWORK_PROBE_TIMEOUT"), 3.0

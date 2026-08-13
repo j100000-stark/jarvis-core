@@ -62,17 +62,7 @@ export const SendJarvisMessageResponse = zod.object({
   "verification": zod.string()
 })),
   "failure": zod.string().nullable(),
-  "error": zod.object({
-    "code": zod.string(),
-    "type": zod.string(),
-    "message": zod.string(),
-    "component": zod.string(),
-    "step": zod.string().nullable(),
-    "recoverable": zod.boolean(),
-    "incidentId": zod.number(),
-    "operation": zod.string(),
-    "timestamp": zod.string()
-  }).optional().nullable()
+  "repairNotes": zod.array(zod.string()).nullish().describe('Sanitized self-repair lifecycle notes when a repair ran.')
 })
 
 

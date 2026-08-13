@@ -51,6 +51,9 @@ class SelfRepairManager:
         self._data_dir = data_dir
         self._attempts = 0
         self._incidents: list[dict] = []
+        # One RepairAgent per manager so its per-incident attempt budget is
+        # shared across all repairs in this session (never reset per call).
+        self._repair_agent = None  # lazy — created on first use
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -102,6 +105,16 @@ class SelfRepairManager:
     def _classify(self, message: str, step: str | None) -> str:
         combined = f"{message} {step or ''}".lower()
 
+        # TTS failure categories (spec Phase 11) — passed through verbatim
+        # from the API server's structured TTS error codes.
+        for tts_cat in (
+            "tts_api_key_missing", "tts_auth_failed", "tts_voice_not_found",
+            "tts_model_invalid", "tts_upstream_error", "tts_network_error",
+            "tts_invalid_audio", "tts_playback_error",
+        ):
+            if tts_cat in combined:
+                return tts_cat
+
         if "web research is not" in combined or "web_research_enabled" in combined:
             return "web_research_disabled"
         if "unknown tool" in combined:
@@ -130,6 +143,9 @@ class SelfRepairManager:
         settings: object,
         registry: object,
     ) -> RepairResult:
+        if failure_type.startswith("tts_"):
+            return self._repair_tts(failure_type)
+
         if failure_type == "web_research_disabled":
             return self._repair_web_research(settings)
 
@@ -204,35 +220,131 @@ class SelfRepairManager:
             message="Unclassified failure — cannot auto-repair.",
         )
 
-    def _repair_web_research(self, settings: object) -> RepairResult:
-        from ..config import Settings
+    def _repair_tts(self, failure_type: str) -> RepairResult:
+        """Dedicated TTS repair strategies (spec Phase 11).
 
-        actions = [
-            "Diagnosed: web_research tool registered but JARVIS_WEB_RESEARCH_ENABLED=false.",
-            "Repair: patching JARVIS_WEB_RESEARCH_ENABLED=true in process environment.",
-        ]
-        os.environ["JARVIS_WEB_RESEARCH_ENABLED"] = "true"
-        try:
-            mem_file = str(getattr(settings, "memory_file", "data/memory.json"))
+        Never changes secrets, never invents voice IDs or model names.
+        Transient categories signal a bounded retry; configuration/auth
+        categories report the exact user action required.
+        """
+        if failure_type in ("tts_network_error", "tts_invalid_audio"):
+            return RepairResult(
+                success=True,  # bounded retry (attempt counter still applies)
+                failure_type=failure_type,
+                actions=[
+                    f"Diagnosed: transient TTS failure ({failure_type}).",
+                    "Strategy: retry synthesis once.",
+                ],
+                message=f"Transient TTS failure ({failure_type}) — retrying once.",
+            )
+        if failure_type == "tts_playback_error":
+            return RepairResult(
+                success=False,
+                failure_type=failure_type,
+                actions=[
+                    "Diagnosed: audio playback failed in the browser (frontend), "
+                    "not a synthesis failure (server).",
+                    "Strategy: frontend falls back to browser SpeechSynthesis; "
+                    "user may need to tap the mic button to unlock iOS audio.",
+                ],
+                message="Playback failed in the browser — synthesis itself succeeded.",
+            )
+        if failure_type in ("tts_api_key_missing", "tts_auth_failed"):
+            return RepairResult(
+                success=False,
+                failure_type=failure_type,
+                actions=[
+                    f"Diagnosed: {failure_type}.",
+                    "Secrets are never modified by self-repair.",
+                    "User action required: verify ELEVENLABS_API_KEY in the secret store.",
+                ],
+                message="ElevenLabs authentication problem — user action required.",
+            )
+        if failure_type in ("tts_voice_not_found", "tts_model_invalid"):
+            return RepairResult(
+                success=False,
+                failure_type=failure_type,
+                actions=[
+                    f"Diagnosed: {failure_type}.",
+                    "Self-repair never invents voice IDs or model names.",
+                    "User action required: verify ELEVENLABS_VOICE_ID / ELEVENLABS_MODEL "
+                    "against the ElevenLabs account.",
+                ],
+                message="ElevenLabs voice/model configuration error — user action required.",
+            )
+        # tts_upstream_error and anything else: report, no blind retry loop
+        return RepairResult(
+            success=False,
+            failure_type=failure_type,
+            actions=[
+                f"Diagnosed: {failure_type} (ElevenLabs upstream).",
+                "Strategy: report — upstream service errors are outside local control.",
+            ],
+            message="ElevenLabs upstream error — cannot repair locally.",
+        )
+
+    def _repair_web_research(self, settings: object) -> RepairResult:
+        """Persistent configuration repair via the RepairAgent (spec Phase 10).
+
+        Lifecycle: root cause → checkpoint → patch (ConfigStore, persists to
+        runtime_config.json AND os.environ) → verify (Settings rebuild) →
+        rollback on failure.  The patch survives process restarts because
+        Settings.from_environment() applies the overlay on every boot.
+        """
+        from ..config import ConfigStore, Settings
+        from .repair_agent import RepairAgent
+
+        mem_file = str(getattr(settings, "memory_file", "data/memory.json"))
+        store = ConfigStore()
+        if self._repair_agent is None:
+            self._repair_agent = RepairAgent(self._data_dir)
+        agent = self._repair_agent
+        rebuilt: dict = {}
+
+        def _patch() -> list[str]:
+            store.set_value("JARVIS_WEB_RESEARCH_ENABLED", "true")
+            return [str(store.path)]
+
+        def _verify() -> bool:
             new_settings = Settings.from_environment(memory_file=mem_file)
             if not new_settings.web_research_enabled:
-                raise RuntimeError("Settings rebuild did not pick up env patch.")
-            actions.append("Verified: web_research_enabled = True in patched settings.")
+                return False
+            # Confirm persistence: the overlay file itself must carry the value
+            if store.get("JARVIS_WEB_RESEARCH_ENABLED") != "true":
+                return False
+            rebuilt["settings"] = new_settings
+            return True
+
+        outcome = agent.run_repair(
+            component="config",
+            error_category="web_research_disabled",
+            root_cause=(
+                "web_research tool registered but web_research_enabled=False "
+                "in runtime settings (JARVIS_WEB_RESEARCH_ENABLED unset or false)."
+            ),
+            repair_plan=[
+                "Persist JARVIS_WEB_RESEARCH_ENABLED=true to runtime_config.json",
+                "Mirror value into process environment",
+                "Rebuild Settings and verify flag + persistence",
+            ],
+            patch=_patch,
+            verify=_verify,
+        )
+        actions = list(outcome.incident.stages)
+        if outcome.success:
             return RepairResult(
                 success=True,
                 failure_type="web_research_disabled",
                 actions=actions,
-                message="Web research enabled for this session. Retrying goal.",
-                repaired_settings=new_settings,
+                message="Web research enabled and persisted. Retrying goal.",
+                repaired_settings=rebuilt.get("settings"),
             )
-        except Exception as exc:
-            actions.append(f"Settings rebuild failed: {exc}")
-            return RepairResult(
-                success=False,
-                failure_type="web_research_disabled",
-                actions=actions,
-                message=f"Could not apply settings patch: {exc}",
-            )
+        return RepairResult(
+            success=False,
+            failure_type="web_research_disabled",
+            actions=actions,
+            message=f"Could not apply persistent config repair: {outcome.message}",
+        )
 
     # ── Incident recording ──────────────────────────────────────────────────
 

@@ -119,6 +119,9 @@ export type TTSStage =
   | "ended"        // audio ended normally
   | "error";       // unexpected TTS error
 
+/** Microphone permission state after proactive initialization. */
+export type MicPermission = "granted" | "denied" | "unsupported" | "unknown";
+
 export interface UseVoiceOptions {
   /** Called when STT produces a final transcript (may fire from onend on iOS). */
   onTranscript: (text: string) => void;
@@ -126,9 +129,10 @@ export interface UseVoiceOptions {
   lang?: string;
   /**
    * Called at key TTS pipeline stages.  Use to push terminal events without
-   * coupling voice state into the UI layer.
+   * coupling voice state into the UI layer.  ``detail`` carries a structured
+   * failure category (e.g. "TTS_AUTH_FAILED") on fallback/error stages.
    */
-  onTtsStage?: (stage: TTSStage) => void;
+  onTtsStage?: (stage: TTSStage, detail?: string) => void;
 }
 
 export interface UseVoice {
@@ -152,6 +156,13 @@ export interface UseVoice {
    * Safe no-op on non-iOS browsers.
    */
   unlockAudio: () => void;
+  /**
+   * Proactively request microphone permission (spec: on first app open).
+   * Uses the Permissions API where available to avoid re-prompting a user
+   * who already denied, then getUserMedia to trigger the browser prompt.
+   * Tracks are stopped immediately — no audio is recorded or uploaded.
+   */
+  initMicrophone: () => Promise<MicPermission>;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -175,6 +186,9 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
   // Accumulated STT state — lives at hook level so onend can access them.
   const accumulatedFinalRef = useRef(""); // final transcript pieces across onresult events
   const lastInterimRef      = useRef(""); // last interim (iOS fallback when no isFinal fires)
+  // Duplicate-submission guard: never submit the same utterance twice in a row
+  // within a short window (iOS can fire onend twice after Safari interruptions).
+  const lastSubmittedRef    = useRef<{ text: string; at: number }>({ text: "", at: 0 });
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -305,6 +319,12 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
 
       const toSubmit = accumulated || fallback;
       if (toSubmit) {
+        // Duplicate prevention: identical text within 3 s is a Safari
+        // double-onend artifact, not a new utterance.
+        const now = Date.now();
+        const last = lastSubmittedRef.current;
+        if (toSubmit === last.text && now - last.at < 3000) return;
+        lastSubmittedRef.current = { text: toSubmit, at: now };
         onTranscriptRef.current(toSubmit);
       }
     };
@@ -348,6 +368,50 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
       const clean = cleanForSpeech(text);
       if (!clean) return;
 
+      // Shared browser SpeechSynthesis fallback — used both when the backend
+      // request fails AND when delivered audio cannot be decoded/played.
+      const speakWithBrowser = (category: string, reason: string): void => {
+        console.warn(
+          `[JARVIS voice] ElevenLabs TTS failed (${category}: ${reason}), falling back to browser SpeechSynthesis.`,
+        );
+        // The fallback must never hide the real failure — the category is
+        // surfaced to the terminal via onTtsStage before falling back.
+        onTtsStageRef.current?.("fallback", category);
+
+        if (!hasSynthesis) {
+          setError(`TTS unavailable: ${reason}`);
+          setVoiceState("error");
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(clean);
+        utterance.lang = lang ?? navigator.language ?? "en-US";
+        utterance.rate = 1.0;
+        utterance.pitch = 0.95;
+        utterance.volume = 1.0;
+
+        utterance.onstart = () => {
+          setTtsProvider("browser");
+          setVoiceState("speaking");
+        };
+        utterance.onend = () => {
+          onTtsStageRef.current?.("ended");
+          setVoiceState("idle");
+        };
+        utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
+          if (e.error !== "interrupted") {
+            onTtsStageRef.current?.("error");
+            setError(`Browser TTS error: ${e.error}`);
+            setVoiceState("error");
+          } else {
+            setVoiceState("idle");
+          }
+        };
+
+        setTtsProvider("browser");
+        window.speechSynthesis.speak(utterance);
+      };
+
       // ── 1. Try ElevenLabs via backend ─────────────────────────────────
       onTtsStageRef.current?.("requesting");
 
@@ -359,11 +423,15 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
         .then(async (resp) => {
           if (!resp.ok) {
             let msg = `HTTP ${resp.status}`;
+            let category = "TTS_UPSTREAM_ERROR";
             try {
-              const data = (await resp.json()) as { error?: string };
+              const data = (await resp.json()) as { error?: string; code?: string };
               if (data.error) msg = data.error;
+              if (data.code) category = data.code;
             } catch { /* ignore */ }
-            throw new Error(msg);
+            const failure = new Error(msg) as Error & { category?: string };
+            failure.category = category;
+            throw failure;
           }
           return resp.blob();
         })
@@ -385,9 +453,9 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
 
           audio.onerror = () => {
             stopAudio();
-            onTtsStageRef.current?.("error");
-            setError("ElevenLabs audio playback failed.");
-            setVoiceState("error");
+            onTtsStageRef.current?.("error", "TTS_PLAYBACK_ERROR");
+            // Malformed/undecodable audio — still deliver speech via fallback.
+            speakWithBrowser("TTS_PLAYBACK_ERROR", "audio element failed to decode/play");
           };
 
           // play() is async — enter SPEAKING only when it actually starts.
@@ -401,7 +469,7 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
             .catch((playErr) => {
               stopAudio();
               console.warn("[JARVIS voice] Audio play() blocked:", playErr);
-              onTtsStageRef.current?.("play_failed");
+              onTtsStageRef.current?.("play_failed", "TTS_PLAYBACK_ERROR");
               setError(
                 "Audio playback blocked. Tap the microphone button, wait for the response, then try again.",
               );
@@ -411,43 +479,9 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
         .catch((err: unknown) => {
           // ── 2. Fall back to browser SpeechSynthesis ───────────────────
           const msg = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `[JARVIS voice] ElevenLabs TTS unavailable (${msg}), falling back to browser SpeechSynthesis.`,
-          );
-          onTtsStageRef.current?.("fallback");
-
-          if (!hasSynthesis) {
-            setError(`TTS unavailable: ${msg}`);
-            setVoiceState("error");
-            return;
-          }
-
-          const utterance = new SpeechSynthesisUtterance(clean);
-          utterance.lang = lang ?? navigator.language ?? "en-US";
-          utterance.rate = 1.0;
-          utterance.pitch = 0.95;
-          utterance.volume = 1.0;
-
-          utterance.onstart = () => {
-            setTtsProvider("browser");
-            setVoiceState("speaking");
-          };
-          utterance.onend = () => {
-            onTtsStageRef.current?.("ended");
-            setVoiceState("idle");
-          };
-          utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
-            if (e.error !== "interrupted") {
-              onTtsStageRef.current?.("error");
-              setError(`Browser TTS error: ${e.error}`);
-              setVoiceState("error");
-            } else {
-              setVoiceState("idle");
-            }
-          };
-
-          setTtsProvider("browser");
-          window.speechSynthesis.speak(utterance);
+          const category =
+            (err as { category?: string })?.category ?? "TTS_NETWORK_ERROR";
+          speakWithBrowser(category, msg);
         });
     },
     [lang, stopAudio],
@@ -460,6 +494,38 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
     if (hasSynthesis) window.speechSynthesis.cancel();
     setVoiceState("idle");
   }, [stopAudio]);
+
+  // ── initMicrophone — proactive permission request (spec Phase 1) ───────
+
+  const initMicrophone = useCallback(async (): Promise<MicPermission> => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      return "unsupported";
+    }
+    // Permissions API first: avoids re-prompting a user who already decided.
+    try {
+      const status = await navigator.permissions?.query?.({
+        name: "microphone" as PermissionName,
+      });
+      if (status?.state === "granted") return "granted";
+      if (status?.state === "denied") return "denied";
+    } catch {
+      /* Permissions API missing 'microphone' (Safari/Firefox) — fall through */
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Permission granted — immediately release the mic. No audio is
+      // recorded or uploaded; this only establishes permission.
+      stream.getTracks().forEach((t) => t.stop());
+      return "granted";
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NotAllowedError" || name === "SecurityError") return "denied";
+      return "unknown";
+    }
+  }, []);
 
   return {
     voiceState,
@@ -474,5 +540,6 @@ export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): U
     speak,
     cancelSpeaking,
     unlockAudio,
+    initMicrophone,
   };
 }

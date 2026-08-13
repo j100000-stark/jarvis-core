@@ -10,7 +10,6 @@ export * from './healthStatus';
 export * from './jarvisAgentActivity';
 export * from './jarvisComponentHealth';
 export * from './jarvisError';
-export * from './jarvisExecutionDiagnostic';
 export * from './jarvisExecutionStep';
 export * from './jarvisMessageInput';
 export * from './jarvisMessageResponse';

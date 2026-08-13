@@ -50,7 +50,8 @@ import { LiveTerminal, mkLine, type TerminalLine, type TerminalSeverity } from '
 import { AlertCard, mkAlert, type AlertEntry } from '@/components/jarvis/alert-card';
 import { ErrorDetailCard, type ExecutionDiagnostic } from '@/components/jarvis/error-detail-card';
 import { ResponseCard } from '@/components/jarvis/response-card';
-import { useVoice, type TTSStage } from '@/hooks/use-voice';
+import { useVoice, type TTSStage, type MicPermission } from '@/hooks/use-voice';
+import { useWakeWord } from '@/hooks/use-wake-word';
 
 // ── Provider helpers ─────────────────────────────────────────────────────────
 
@@ -203,16 +204,73 @@ export default function Home() {
       setGoal(text);
       pushLine('SPEECH', 'TRANSCRIBED', 'info');
     }, [pushLine]),
-    onTtsStage: useCallback((stage: TTSStage) => {
+    onTtsStage: useCallback((stage: TTSStage, detail?: string) => {
       switch (stage) {
         case 'requesting':  pushLine('TTS',   'REQUESTING',      'normal');  break;
         case 'received':    pushLine('AUDIO', 'RECEIVED',        'normal');  break;
         case 'playing':     pushLine('AUDIO', 'PLAYING',         'success'); break;
-        case 'play_failed': pushLine('AUDIO', 'PLAY_FAILED',     'error');   break;
-        case 'fallback':    pushLine('TTS',   'BROWSER_FALLBACK','warning'); break;
+        case 'play_failed': pushLine('AUDIO', detail ?? 'PLAY_FAILED', 'error'); break;
+        case 'fallback':
+          // Surface the REAL failure category before falling back —
+          // the fallback must never hide the root cause.
+          if (detail) pushLine('TTS FAILURE', detail, 'error');
+          pushLine('TTS', 'BROWSER_FALLBACK', 'warning');
+          break;
+        case 'error':       pushLine('TTS',   detail ?? 'ERROR', 'error');   break;
         case 'ended':       pushLine('AUDIO', 'ENDED',           'normal');  break;
         default:            break;
       }
+    }, [pushLine]),
+  });
+
+  // ── Microphone permission — requested proactively on app open ─────────────
+  const [micPermission, setMicPermission] = useState<MicPermission>('unknown');
+  const micInitRef = useRef(false);
+  useEffect(() => {
+    if (micInitRef.current) return;
+    micInitRef.current = true;
+    voice.initMicrophone().then((perm) => {
+      setMicPermission(perm);
+      if (perm === 'granted') {
+        pushLine('MICROPHONE', 'READY', 'success');
+      } else if (perm === 'denied') {
+        pushLine('MICROPHONE', 'PERMISSION DENIED', 'error');
+        pushAlert(
+          'Microphone Blocked',
+          'Enable microphone access in your browser settings to talk to JARVIS.',
+          'warning',
+        );
+      } else if (perm === 'unsupported') {
+        pushLine('MICROPHONE', 'UNSUPPORTED', 'warning');
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Wake word — primary hands-free activation (spec Phase 2) ──────────────
+  const wakeWord = useWakeWord({
+    enabled:
+      ready &&
+      micPermission === 'granted' &&
+      voice.voiceState === 'idle' &&
+      !sendMessage.isPending &&
+      !chatOpen,
+    onWake: useCallback((command: string) => {
+      pushLine('WAKE WORD', 'DETECTED', 'success');
+      if (command) {
+        // Wake phrase carried a command ("Jarvis, che ore sono?") — submit it.
+        lastTranscriptRef.current = command;
+        setGoal(command);
+      } else {
+        // Bare wake word — open the mic for the command.
+        voice.startListening();
+      }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pushLine]),
+    onStatusChange: useCallback((status: string) => {
+      if (status === 'listening')   pushLine('WAKE WORD', 'ACTIVE — SAY "JARVIS"', 'info');
+      if (status === 'restricted')  pushLine('WAKE WORD', 'UNAVAILABLE — USE MIC BUTTON', 'warning');
+      if (status === 'unsupported') pushLine('WAKE WORD', 'UNSUPPORTED — USE MIC BUTTON', 'warning');
     }, [pushLine]),
   });
 
@@ -251,7 +309,16 @@ export default function Home() {
         pushLine('PROVIDER', 'NONE',        'warning');
       }
     });
-    delay(600, () => pushLine('ELEVENLABS', 'READY',           'info'));
+    // ELEVENLABS status is verified with a REAL synthesis test — never faked.
+    delay(600, () => {
+      fetch('/api/tts/health')
+        .then((r) => r.json())
+        .then((h: { ready?: boolean; category?: string }) => {
+          if (h.ready) pushLine('ELEVENLABS', 'VERIFIED', 'success');
+          else pushLine('ELEVENLABS', h.category ?? 'UNAVAILABLE', 'error');
+        })
+        .catch(() => pushLine('ELEVENLABS', 'UNREACHABLE', 'error'));
+    });
     delay(720, () => pushLine('VOICE',      'READY',           'info'));
     delay(840, () => pushLine('WATCHDOG',   'ACTIVE',          'info'));
     delay(960, () => pushLine('TOOLS',      '11 REGISTERED',   'info'));
@@ -435,10 +502,31 @@ export default function Home() {
           pushLine('[DEMO] SAFETY', 'CHECK', 'info');
           pushLine('[DEMO] RESPONSE', 'READY', 'success');
         } else {
-          if ((result.executionSteps ?? []).length > 0) {
+          const steps = result.executionSteps ?? [];
+          if (steps.length > 0) {
             pushLine('AGENT', 'SELECTED', 'info');
             pushLine('TOOL', 'EXECUTION', 'info');
+            // Truthful per-tool events for completed steps (spec Phase 12/14)
+            for (const step of steps) {
+              if (step.tool === 'web_research') {
+                pushLine('WEB', 'SEARCHING', 'info');
+                if (step.error) pushLine('WEB', 'ERROR', 'error');
+                else pushLine('WEB', 'RESULTS RECEIVED', 'success');
+              } else if (step.error) {
+                pushLine(step.tool.toUpperCase().slice(0, 14), 'FAILED', 'error');
+              }
+            }
             pushLine('RESULT', 'RECEIVED', 'info');
+          }
+
+          // Self-repair lifecycle events (sanitized server-side)
+          const repairNotes = (result as typeof result & { repairNotes?: string[] | null })
+            .repairNotes ?? [];
+          if (repairNotes.length > 0) {
+            pushLine('SELF-REPAIR', 'TRIGGERED', 'recovery');
+            for (const note of repairNotes.slice(0, 6)) {
+              pushLine('REPAIR', note.slice(0, 48).toUpperCase(), 'recovery');
+            }
           }
 
           if (!result.success && execError) {

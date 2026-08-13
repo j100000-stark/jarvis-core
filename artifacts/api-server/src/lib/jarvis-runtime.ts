@@ -48,6 +48,8 @@ export type JarvisGoalResult = {
   planProvider: string | null;
   executionSteps: JarvisExecutionStep[];
   failure: string | null;
+  /** Sanitized self-repair lifecycle notes when a repair ran. */
+  repairNotes?: string[] | null;
   /** Structured diagnostic present when an exception caused the failure. */
   error?: ExecutionDiagnostic | null;
 };

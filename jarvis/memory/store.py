@@ -73,15 +73,38 @@ class MemoryStore:
         return record
 
     def search(self, query: str = "", tier: str | None = None) -> list[MemoryRecord]:
-        """Return newest matching records, optionally filtered by tier."""
+        """Return newest matching records, optionally filtered by tier.
+
+        Matching is tolerant: a record matches when the full query is a
+        substring OR any query token (≥3 chars) appears in the content.
+        This lets natural-language questions ("Come mi chiamo?") hit records
+        stored as statements ("User's name is Sandeep") when they share words,
+        instead of requiring an exact phrase match.
+        """
         normalized = query.casefold().strip()
+        tokens = [t for t in normalized.split() if len(t) >= 3]
+
+        def matches(content: str) -> bool:
+            if not normalized:
+                return True
+            folded = content.casefold()
+            if normalized in folded:
+                return True
+            return any(token in folded for token in tokens)
+
         matching = (
             record
             for record in reversed(self._records)
-            if (tier is None or record.tier == tier)
-            and (not normalized or normalized in record.content.casefold())
+            if (tier is None or record.tier == tier) and matches(record.content)
         )
         return list(matching)
+
+    def recent(self, limit: int = 8, tier: str | None = None) -> list[MemoryRecord]:
+        """Return the newest records regardless of query match."""
+        records = [
+            r for r in reversed(self._records) if tier is None or r.tier == tier
+        ]
+        return records[:limit]
 
     def count(self, tier: str | None = None) -> int:
         if tier is None:

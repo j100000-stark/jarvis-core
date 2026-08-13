@@ -1,0 +1,759 @@
+This is the next major JARVIS engineering phase.
+
+IMPORTANT:
+Do NOT blindly rewrite the existing system.
+Do NOT remove working functionality.
+Do NOT start coding immediately.
+
+First inspect the existing architecture, current runtime state, tests, configuration system, voice pipeline, tool registry, memory system, execution pipeline, and current Self-Repair implementation.
+
+Then identify the smallest safe set of changes required to implement the specification below.
+
+The current system already has:
+- Groq LLM working
+- openai/gpt-oss-120b
+- persistent memory with deduplication
+- 11 registered tools
+- web research
+- ElevenLabs TTS integration
+- cinematic neural UI
+- Live Terminal
+- structured execution diagnostics
+- Self-Repair Manager
+- 455 passing tests
+- iOS Safari voice handling improvements
+
+PRESERVE ALL OF THAT.
+
+==================================================
+PHASE 1 — SIRI-LIKE VOICE EXPERIENCE
+==================================================
+
+The current iPhone experience is still wrong.
+
+I want JARVIS to behave as naturally as possible like a voice assistant.
+
+FIRST APP OPEN:
+
+Request microphone permission proactively.
+
+The application should initialize the microphone/voice subsystem on startup so the browser can show the microphone permission prompt as early as the platform allows.
+
+Do NOT wait until the user presses the microphone button.
+
+If permission is denied:
+- clearly show MICROPHONE PERMISSION DENIED
+- explain how to enable it
+- do not repeatedly request permission
+
+If permission is granted:
+- initialize the voice subsystem
+- show MICROPHONE READY
+
+IMPORTANT iOS CONSTRAINT:
+Safari/web apps cannot behave exactly like native Siri.
+Do not fake capabilities that iOS does not allow.
+
+Implement the closest reliable web architecture.
+
+==================================================
+PHASE 2 — WAKE WORD
+==================================================
+
+I want hands-free activation.
+
+When JARVIS is in STANDBY, detect a wake phrase such as:
+
+"Jarvis"
+"Jarvis, ci sei?"
+"Hey Jarvis"
+
+Wake-word detection should happen locally whenever technically possible.
+
+DO NOT continuously upload microphone audio to the server just to detect the wake word.
+
+When the wake word is detected:
+
+STANDBY
+→ WAKE DETECTED
+→ LISTENING
+
+The wake phrase itself should NOT accidentally become part of the user's command.
+
+Example:
+
+User:
+"Jarvis, che tempo fa oggi?"
+
+JARVIS should process:
+
+"che tempo fa oggi?"
+
+not:
+
+"Jarvis, che tempo fa oggi?"
+
+If continuous listening is not technically possible on iOS Safari, implement a robust fallback and clearly indicate the limitation rather than pretending it is continuous.
+
+==================================================
+PHASE 3 — AUTOMATIC END OF SPEECH
+==================================================
+
+The user should NOT have to press a button to stop speaking.
+
+Example:
+
+JARVIS:
+LISTENING
+
+User:
+"Jarvis, come stai?"
+
+User stops talking.
+
+After speech silence is detected:
+
+LISTENING
+→ SPEECH ENDED
+→ TRANSCRIBING
+→ REQUEST SENT
+
+Then JARVIS processes the request automatically.
+
+Fix the current issue where iOS remains stuck in LISTENING.
+
+Handle:
+- onresult
+- onend
+- interim results
+- final results
+- silence timeout
+- recognition restart
+- duplicate transcript prevention
+- aborted recognition
+- permission errors
+- Safari interruptions
+
+Never submit the same utterance twice.
+
+==================================================
+PHASE 4 — REAL TTS / ELEVENLABS
+==================================================
+
+The current Live Terminal sometimes shows:
+
+TTS → REQUESTING
+TTS → BROWSER_FALLBACK
+
+This must be diagnosed properly.
+
+Do NOT assume why ElevenLabs fails.
+
+Trace the entire pipeline:
+
+ELEVENLABS_API_KEY
+→ ELEVENLABS_VOICE_ID
+→ ELEVENLABS_MODEL
+→ /api/tts
+→ ElevenLabs upstream request
+→ HTTP status
+→ response body
+→ Content-Type
+→ audio bytes
+→ browser playback
+
+Add structured sanitized diagnostics.
+
+NEVER expose:
+- API keys
+- secrets
+- authorization headers
+- private credentials
+
+Run a REAL ElevenLabs synthesis test from the running API server using a short sentence.
+
+Do not report ElevenLabs READY unless the actual synthesis succeeds.
+
+Expected successful terminal:
+
+> TTS ............... REQUESTING
+> ELEVENLABS ........ CONNECTING
+> ELEVENLABS ........ AUTHENTICATED
+> ELEVENLABS ........ SYNTHESIZING
+> AUDIO ............. RECEIVED
+> AUDIO ............. PLAYING
+> JARVIS ............ SPEAKING
+> JARVIS ............ IDLE
+
+Failure:
+
+> ELEVENLABS ........ ERROR
+> TTS ............... FALLBACK
+
+with a useful sanitized failure category.
+
+Possible categories:
+
+TTS_API_KEY_MISSING
+TTS_AUTH_FAILED
+TTS_VOICE_NOT_FOUND
+TTS_MODEL_INVALID
+TTS_UPSTREAM_ERROR
+TTS_NETWORK_ERROR
+TTS_INVALID_AUDIO
+TTS_PLAYBACK_ERROR
+
+Do not invent a voice ID or model.
+
+Keep browser SpeechSynthesis as a fallback.
+
+However, fallback must NEVER hide the actual ElevenLabs failure.
+
+==================================================
+PHASE 5 — IOS AUDIO PLAYBACK
+==================================================
+
+Fix iOS Safari autoplay restrictions correctly.
+
+The application should unlock/pre-authorize audio during the user's initial microphone interaction where required.
+
+Do not falsely show SPEAKING before audio is actually playing.
+
+Correct state sequence:
+
+TTS REQUESTING
+→ AUDIO RECEIVED
+→ AUDIO PLAYING
+→ SPEAKING
+
+If playback fails:
+
+AUDIO PLAY FAILED
+→ BROWSER FALLBACK
+
+The terminal must distinguish synthesis failure from playback failure.
+
+==================================================
+PHASE 6 — REAL SELF-REPAIR
+==================================================
+
+The current Self-Repair system is a good foundation but needs to become a real engineering recovery system.
+
+Do NOT treat repairs such as:
+
+"set JARVIS_WEB_RESEARCH_ENABLED=true"
+
+as sufficient by themselves.
+
+A repair must identify the actual source of the problem.
+
+Required lifecycle:
+
+INCIDENT DETECTED
+→ DIAGNOSIS
+→ ROOT CAUSE
+→ REPAIR PLAN
+→ PATCH
+→ TEST
+→ VERIFICATION
+→ RETRY
+→ SUCCESS
+
+or:
+
+INCIDENT DETECTED
+→ DIAGNOSIS
+→ REPAIR FAILED
+→ ROLLBACK
+→ REPORT
+
+A repair must never be considered successful until verification passes.
+
+==================================================
+PHASE 7 — SEPARATE REPAIR AGENT
+==================================================
+
+Create a separate RepairAgent architecture.
+
+The main JARVIS agent remains responsible for normal tasks.
+
+The RepairAgent is responsible for engineering recovery.
+
+Architecture:
+
+MAIN JARVIS
+    |
+    +---- normal execution
+    |
+    +---- incident
+              |
+              v
+        REPAIR AGENT
+              |
+              +---- inspect
+              +---- diagnose
+              +---- plan
+              +---- patch
+              +---- test
+              +---- verify
+              |
+              +---- success → retry
+              |
+              +---- failure → rollback
+
+Create independent configuration for the repair model:
+
+REPAIR_LLM_PROVIDER
+REPAIR_LLM_MODEL
+
+Initially it may use the same provider if necessary, but the architecture must allow a different model later.
+
+The RepairAgent must NOT automatically expose all secrets or unrestricted credentials to the model.
+
+==================================================
+PHASE 8 — REPAIR AGENT SAFETY
+==================================================
+
+The RepairAgent may:
+
+- inspect relevant source files
+- inspect stack traces
+- inspect configuration schemas
+- inspect tests
+- create patches
+- modify relevant code
+- create tests
+- run tests
+- verify runtime behavior
+
+It must NOT:
+
+- expose API keys
+- print secrets
+- blindly rewrite the entire repository
+- modify unrelated files
+- delete the project
+- disable security controls
+- disable authentication
+- create infinite repair loops
+- claim success without verification
+
+Use bounded repair attempts.
+
+Maximum:
+3 repair attempts per incident/goal.
+
+If all fail:
+stop safely and provide the diagnostic result.
+
+==================================================
+PHASE 9 — PATCH + ROLLBACK
+==================================================
+
+Repairs must be transactional where practical.
+
+Before modifying code:
+
+create a repair checkpoint / working copy / git-style snapshot.
+
+Then:
+
+PATCH
+→ TEST
+→ VERIFY
+
+If verification fails:
+
+ROLLBACK
+
+The original working system must be restored.
+
+The incident record must contain:
+
+incident ID
+timestamp
+component
+error category
+root cause
+repair plan
+files changed
+tests executed
+test results
+verification result
+rollback result
+retry result
+
+All records must be sanitized.
+
+==================================================
+PHASE 10 — CONFIGURATION REPAIR
+==================================================
+
+Configuration must have one authoritative source.
+
+Do NOT make a temporary:
+
+os.environ["SOMETHING"] = "true"
+
+change and call that a permanent repair.
+
+If Self-Repair changes configuration:
+
+1. identify the authoritative configuration source
+2. update it
+3. reload/rebuild runtime settings
+4. verify the new value
+5. retry the failed operation
+6. persist the configuration
+7. restart if required
+8. verify again after restart
+
+Add a test proving:
+
+incorrect configuration
+→ repair
+→ persistent configuration fixed
+→ runtime reload
+→ operation succeeds
+→ restart
+→ configuration remains fixed
+
+==================================================
+PHASE 11 — SELF-REPAIR TTS
+==================================================
+
+TTS failures must have dedicated repair logic.
+
+Example:
+
+TTS_AUTH_FAILED
+→ do NOT change secrets
+→ report user action required
+
+TTS_NETWORK_ERROR
+→ bounded retry
+
+TTS_MODEL_INVALID
+→ verify configured model
+→ select only a verified supported configured model
+
+TTS_VOICE_NOT_FOUND
+→ do NOT invent a voice ID
+→ report configuration error
+
+TTS_INVALID_AUDIO
+→ inspect response headers/body
+→ retry once
+→ diagnose upstream response
+
+TTS_PLAYBACK_ERROR
+→ distinguish frontend playback problem from server synthesis
+
+Never use generic web search as a substitute for diagnosing the actual local system.
+
+==================================================
+PHASE 12 — WEB SEARCH
+==================================================
+
+Web search must be a real tool.
+
+The LLM must know:
+- when it has access to web research
+- how to invoke it
+- what results it received
+
+If the user asks for current information:
+
+search the web.
+
+Do not fabricate web results.
+
+Do not claim a search happened if the tool was not actually executed.
+
+Live Terminal should show:
+
+> WEB ........ SEARCHING
+> WEB ........ RESULTS RECEIVED
+> WEB ........ SOURCES VERIFIED
+
+If search fails:
+
+> WEB ........ ERROR
+
+==================================================
+PHASE 13 — TOOL AUTONOMY
+==================================================
+
+All safe registered tools should be available to the planner.
+
+If a requested capability does not exist:
+
+JARVIS should diagnose:
+
+CAPABILITY MISSING
+
+Then determine whether the capability can safely be created.
+
+It may propose/create:
+- a tool
+- a helper
+- an API route
+- a workflow
+- a parser
+- a connector
+
+But it must:
+
+PLAN
+→ IMPLEMENT
+→ TEST
+→ VERIFY
+
+Never claim that a capability exists until it has been verified.
+
+==================================================
+PHASE 14 — LIVE TERMINAL
+==================================================
+
+Keep the cinematic terminal.
+
+The terminal must contain truthful events only.
+
+Examples:
+
+> MICROPHONE .... READY
+> WAKE .......... LISTENING
+> WAKE .......... DETECTED
+> SPEECH ........ TRANSCRIBING
+> REQUEST ....... SENT
+> PLAN .......... CREATING
+> GROQ .......... PROCESSING
+> AGENT ......... SELECTED
+> TOOL .......... WEB_RESEARCH
+> RESULT ........ RECEIVED
+> RESPONSE ...... GENERATED
+> TTS ........... SYNTHESIZING
+> AUDIO ......... PLAYING
+> JARVIS ........ SPEAKING
+
+Errors:
+
+> ERROR ......... TTS_AUTH_FAILED
+
+Recovery:
+
+> SELF-REPAIR ... INCIDENT DETECTED
+> DIAGNOSIS ..... ROOT CAUSE FOUND
+> REPAIR ........ PATCHING
+> TEST .......... 18/18 PASSED
+> VERIFY ........ SUCCESS
+> RECOVERY ...... COMPLETE
+> RETRY ......... GOAL RESUMED
+
+Use:
+- blue/cyan = normal
+- green = success
+- amber = recovery/warning
+- red = failure
+- deep red = critical
+
+Do not fabricate "thinking" text.
+
+Show execution state, not private chain-of-thought.
+
+==================================================
+PHASE 15 — MEMORY
+==================================================
+
+Preserve the existing memory deduplication.
+
+Verify:
+
+"Mi chiamo Sandeep. Ricordalo."
+
+stores one canonical memory.
+
+After restart:
+
+"Come mi chiamo?"
+
+must retrieve the memory.
+
+Do not generate dozens of duplicate memory records.
+
+==================================================
+PHASE 16 — UI
+==================================================
+
+Keep the current cinematic neural interface.
+
+Remove any requirement to press "TAP TO TALK".
+
+The microphone button may remain as a manual fallback, but it should not be the primary interaction.
+
+Primary experience:
+
+STANDBY
+→ WAKE WORD
+→ LISTENING
+→ AUTOMATIC RESPONSE
+
+Keep Chat as a secondary interface.
+
+Do not redesign the whole UI.
+
+==================================================
+PHASE 17 — TESTING
+==================================================
+
+Before finishing:
+
+Run all existing tests.
+
+Add focused tests for:
+
+VOICE:
+- microphone initialization
+- permission denied
+- wake word
+- transcript extraction
+- silence detection
+- duplicate prevention
+- iOS onend behavior
+- recognition restart
+
+TTS:
+- ElevenLabs success
+- auth failure
+- missing key
+- missing voice
+- invalid model
+- upstream failure
+- malformed audio
+- playback failure
+- browser fallback
+
+SELF-REPAIR:
+- incident detection
+- diagnosis
+- repair plan
+- patch creation
+- test execution
+- verification
+- rollback
+- retry
+- bounded attempts
+- secret sanitization
+- persistent configuration repair
+- restart persistence
+
+WEB:
+- web tool available
+- actual search execution
+- search failure
+- result propagation
+
+MEMORY:
+- deduplication
+- persistence
+- retrieval after restart
+
+Run:
+- complete Python suite
+- TypeScript checks
+- API tests
+- real Groq request
+- real ElevenLabs request
+- real web-search test
+- simulated repair incident
+
+==================================================
+PHASE 18 — REAL END-TO-END VERIFICATION
+==================================================
+
+Do not finish with only unit tests.
+
+Perform real runtime checks.
+
+Test:
+
+1.
+"Mi chiamo Sandeep. Ricordalo."
+
+2.
+Restart.
+
+3.
+"Come mi chiamo?"
+
+4.
+"Jarvis, ci sei?"
+
+5.
+Wait for automatic listening.
+
+6.
+"Che ore sono?"
+
+7.
+Verify automatic TTS response.
+
+8.
+"Fai una ricerca online sulle ultime notizie sull'intelligenza artificiale."
+
+9.
+Verify real web search.
+
+10.
+Trigger a SAFE controlled failure.
+
+11.
+Verify:
+
+incident
+→ diagnosis
+→ repair
+→ test
+→ verification
+→ retry
+
+12.
+Verify that the repair persists after restart.
+
+==================================================
+FINAL REQUIREMENT
+==================================================
+
+Do not stop after analysis.
+
+Do not stop after writing code.
+
+Do not stop after unit tests.
+
+Continue through:
+
+ANALYZE
+→ IMPLEMENT
+→ TEST
+→ RESTART
+→ REAL RUNTIME VERIFICATION
+→ FINAL REPORT
+
+If something cannot be implemented because of an iOS/Safari platform limitation, clearly identify the limitation and implement the best safe fallback.
+
+At the end report:
+
+1. exact files changed
+2. exact root causes found
+3. microphone/wake-word status
+4. ElevenLabs status
+5. web-search status
+6. Self-Repair status
+7. RepairAgent status
+8. memory status
+9. total tests
+10. TypeScript status
+11. real end-to-end results
+12. anything still blocked by iOS/Safari
+
+Never claim something is working unless you actually verified it.

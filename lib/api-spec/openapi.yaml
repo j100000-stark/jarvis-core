@@ -188,6 +188,11 @@ components:
             $ref: "#/components/schemas/JarvisExecutionStep"
         failure:
           type: ["string", "null"]
+        repairNotes:
+          type: ["array", "null"]
+          items:
+            type: string
+          description: Sanitized self-repair lifecycle notes when a repair ran.
       required:
         - success
         - goal

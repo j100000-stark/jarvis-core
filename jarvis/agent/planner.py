@@ -20,9 +20,14 @@ class Planner:
         if not cleaned_goal:
             raise ValueError("A high-level goal cannot be empty.")
 
+        # Query-matched memories first; when nothing matches (e.g. the goal is
+        # in a different language than the stored fact), fall back to the most
+        # recent memories so the brain still sees known facts.
+        matched = self.memory.search(cleaned_goal)
+        context = matched if matched else self.memory.recent(limit=8)
         plan = self.brain.create_plan(
             cleaned_goal,
-            tuple(record.content for record in self.memory.search(cleaned_goal)),
+            tuple(record.content for record in context),
         )
         self._validate(plan, cleaned_goal)
         return plan

@@ -264,6 +264,8 @@ class Assistant:
         execution_steps = _build_steps(report)
         response = self._format_execution_report(report)
         if repair_notes:
+            from ..diagnostics import sanitize_message
+            repair_notes = [sanitize_message(n) for n in repair_notes]
             concise = "; ".join(n for n in repair_notes[:2] if n)
             response = f"[Self-repair: {concise}] {response}"
 

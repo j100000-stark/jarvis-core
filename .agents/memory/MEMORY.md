@@ -3,6 +3,9 @@
 - [Memory tiers](memory-tiers.md) — MemoryRecord has `tier` field (default "long_term"); backward-compatible with old JSON; tiers: long_term/episodic/system.
 - [Voice hook V2 — iOS fixes](voice-hook-v2.md) — STT submits in onend (iOS fix); SPEAKING only after audio.play() resolves; unlockAudio() in mic button press.
 - [Self-repair wiring](self-repair-wiring.md) — SelfRepairManager field in Assistant; repairNotes must be sanitize_message()'d; __new__ test helpers need manual self_repair + tools fields.
+- [RepairAgent + persistent config](repair-agent.md) — transactional repairs (files+env checkpoint/rollback), runtime_config.json overlay precedence, TTS repair strategies, sanitization rules.
+- [Wake word + mic + TTS categories](voice-wake-word.md) — proactive mic permission, local wake-word loop with honest iOS degradation, TTS failure categories, real /api/tts/health (402 free-tier issue).
+- [Memory search fallback](memory-search-fallback.md) — cross-language recall: token matching + recent-memories fallback in Planner and RecallTool; full-phrase substring alone breaks IT↔EN retrieval.
 - [CoreState](core-state.md) — NeuralCore + Waveform + STATE_META all require `executing` entry; adding a new CoreState requires updating all three.
 - [ElevenLabs TTS](tts-elevenlabs.md) — server-side proxy at /api/tts; API key stays in Node process.env; frontend falls back to SpeechSynthesis on error.
 - [Cinematic UI V2](cinematic-ui-v2.md) — operating console redesign: LiveTerminal, AlertCard, ResponseCard, terminal event system, alert pulse, layout rules.

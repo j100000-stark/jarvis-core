@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
     # Known API key prefixes (OpenAI, Groq, Anthropic, generic sk-)
     re.compile(r'\bsk-[A-Za-z0-9_\-]{16,}', re.IGNORECASE),
+    # Stripe-style / generic underscore-prefixed keys (sk_live_, sk_test_, pk_live_, rk_...)
+    re.compile(r'\b[a-z]{2}_(?:live|test)_[A-Za-z0-9]{16,}', re.IGNORECASE),
+    re.compile(r'\bsk_[A-Za-z0-9_\-]{16,}', re.IGNORECASE),
     re.compile(r'\bgsk_[A-Za-z0-9_\-]{16,}', re.IGNORECASE),
     re.compile(r'\bsk-ant-[A-Za-z0-9_\-]{16,}', re.IGNORECASE),
     # ElevenLabs keys (xi-api-key header or raw value)

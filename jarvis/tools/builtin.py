@@ -93,7 +93,16 @@ class RecallTool:
     def run(self, argument: str, context: ToolContext) -> ToolResult:
         records = context.memory.search(argument.strip(), tier="long_term")
         if not records:
-            return ToolResult(ok=True, output="No matching memories found.")
+            # Honest fallback: show the newest memories, clearly labelled —
+            # cross-language queries often share no tokens with stored facts.
+            recent = context.memory.recent(limit=8, tier="long_term")
+            if not recent:
+                return ToolResult(ok=True, output="No matching memories found.")
+            lines = "\n".join(f"#{r.identifier}: {r.content}" for r in recent)
+            return ToolResult(
+                ok=True,
+                output=f"No exact match. Most recent memories:\n{lines}",
+            )
         lines = "\n".join(
             f"#{r.identifier}: {r.content}" for r in records
         )
