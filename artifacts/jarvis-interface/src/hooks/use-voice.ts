@@ -2,16 +2,16 @@
  * useVoice — Voice pipeline for JARVIS V1.
  *
  * STT:  Browser Web Speech API (SpeechRecognition / webkitSpeechRecognition)
- * TTS:  ElevenLabs via /api/tts backend endpoint (API key stays server-side)
- *       → fallback to browser SpeechSynthesis when backend is unavailable
+ *       iOS Safari fix: accumulates final transcript in a ref and submits in
+ *       onend, because iOS sometimes fires onend without isFinal=true in onresult.
  *
- * State machine:
- *   idle → listening  (startListening)
- *   listening → idle  (stopListening or final transcript received)
- *   idle → speaking   (speak called)
- *   speaking → idle   (audio ended / synthesis complete)
- *   any → error       (recognition or TTS error)
- *   unsupported       (browser has no STT/TTS support)
+ * TTS:  ElevenLabs via /api/tts backend endpoint (API key stays server-side)
+ *       → fallback to browser SpeechSynthesis when backend is unavailable.
+ *       SPEAKING state is only set when audio.play() actually resolves (not before
+ *       the fetch starts), so the UI never shows SPEAKING for silent audio.
+ *
+ * iOS unlock: call unlockAudio() during a user gesture (mic button press) to
+ *   pre-authorise future async audio.play() calls on iOS Safari.
  *
  * Security: ELEVENLABS_API_KEY never touches the browser.  The /api/tts
  * endpoint is a pure server-side proxy.
@@ -106,11 +106,29 @@ export type VoiceState =
 /** Which TTS path was used for the most recent speak() call. */
 export type TTSProvider = "elevenlabs" | "browser" | "none";
 
+/**
+ * Key stages emitted by speak() so the host can push terminal events.
+ * All stages are best-effort; the host must not assume strict ordering.
+ */
+export type TTSStage =
+  | "requesting"   // fetch('/api/tts') sent
+  | "received"     // audio blob received from server
+  | "playing"      // audio.play() resolved — audio is actually playing
+  | "play_failed"  // audio.play() rejected (iOS autoplay policy, etc.)
+  | "fallback"     // falling back to browser SpeechSynthesis
+  | "ended"        // audio ended normally
+  | "error";       // unexpected TTS error
+
 export interface UseVoiceOptions {
-  /** Called when STT produces a final transcript. */
+  /** Called when STT produces a final transcript (may fire from onend on iOS). */
   onTranscript: (text: string) => void;
   /** BCP-47 language tag for both STT and browser TTS (default: browser locale). */
   lang?: string;
+  /**
+   * Called at key TTS pipeline stages.  Use to push terminal events without
+   * coupling voice state into the UI layer.
+   */
+  onTtsStage?: (stage: TTSStage) => void;
 }
 
 export interface UseVoice {
@@ -120,7 +138,7 @@ export interface UseVoice {
   /** false when the browser lacks SpeechRecognition or SpeechSynthesis. */
   isSupported: boolean;
   error: string | null;
-  /** Interim transcript while listening (cleared when final transcript fires). */
+  /** Interim transcript while listening (cleared when transcript is submitted). */
   transcript: string;
   /** Which TTS provider handled the last speak() call. */
   ttsProvider: TTSProvider;
@@ -128,11 +146,17 @@ export interface UseVoice {
   stopListening: () => void;
   speak: (text: string) => void;
   cancelSpeaking: () => void;
+  /**
+   * Unlock the iOS audio context.  Must be called synchronously inside a user
+   * gesture (e.g. mic button click) before the async speak() chain runs.
+   * Safe no-op on non-iOS browsers.
+   */
+  unlockAudio: () => void;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
+export function useVoice({ onTranscript, lang, onTtsStage }: UseVoiceOptions): UseVoice {
   const [voiceState, setVoiceState] = useState<VoiceState>(
     isSupportedBrowser ? "idle" : "unsupported",
   );
@@ -140,13 +164,19 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
   const [error, setError] = useState<string | null>(null);
   const [ttsProvider, setTtsProvider] = useState<TTSProvider>("none");
 
-  const recognitionRef = useRef<ISpeechRecognition | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioBlobUrlRef = useRef<string | null>(null);
-  const onTranscriptRef = useRef(onTranscript);
-  onTranscriptRef.current = onTranscript;
+  const recognitionRef      = useRef<ISpeechRecognition | null>(null);
+  const audioRef            = useRef<HTMLAudioElement | null>(null);
+  const audioBlobUrlRef     = useRef<string | null>(null);
+  const onTranscriptRef     = useRef(onTranscript);
+  const onTtsStageRef       = useRef(onTtsStage);
+  onTranscriptRef.current   = onTranscript;
+  onTtsStageRef.current     = onTtsStage;
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // Accumulated STT state — lives at hook level so onend can access them.
+  const accumulatedFinalRef = useRef(""); // final transcript pieces across onresult events
+  const lastInterimRef      = useRef(""); // last interim (iOS fallback when no isFinal fires)
+
+  // ── Helpers ────────────────────────────────────────────────────────────
 
   /** Stop and release any active <audio> element from ElevenLabs playback. */
   const stopAudio = useCallback(() => {
@@ -162,7 +192,7 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     }
   }, []);
 
-  // ── Cleanup on unmount ─────────────────────────────────────────────────────
+  // ── Cleanup on unmount ─────────────────────────────────────────────────
 
   useEffect(() => {
     return () => {
@@ -172,13 +202,42 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     };
   }, [stopAudio]);
 
-  // ── startListening ─────────────────────────────────────────────────────────
+  // ── unlockAudio ────────────────────────────────────────────────────────
+
+  /**
+   * Play a zero-length silent buffer to unlock the AudioContext on iOS Safari.
+   * Must be called synchronously during a user gesture (tap/click).
+   * This pre-authorises subsequent async audio.play() calls in speak().
+   */
+  const unlockAudio = useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      type WinWithAudio = Window & {
+        AudioContext?: typeof AudioContext;
+        webkitAudioContext?: typeof AudioContext;
+      };
+      const W = window as WinWithAudio;
+      const Ctx = W.AudioContext ?? W.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(ctx.destination);
+      src.start(0);
+      ctx.resume().catch(() => {});
+      // Close after a brief tick — keeps context alive long enough for play() to inherit unlock
+      setTimeout(() => ctx.close().catch(() => {}), 500);
+    } catch { /* best-effort — never throw from a gesture handler */ }
+  }, []);
+
+  // ── startListening ─────────────────────────────────────────────────────
 
   const startListening = useCallback(() => {
     if (!isSupportedBrowser) return;
     if (voiceState === "listening") return;
 
-    // Cancel any active audio before listening (avoids feedback)
+    // Cancel any active audio before listening (avoids feedback loop)
     stopAudio();
     if (hasSynthesis) window.speechSynthesis.cancel();
     if (recognitionRef.current) {
@@ -188,9 +247,13 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) return;
 
+    // Reset accumulated transcript for this recognition session
+    accumulatedFinalRef.current = "";
+    lastInterimRef.current = "";
+
     const rec = new Ctor();
-    rec.continuous = false;
-    rec.interimResults = true;
+    rec.continuous = false;    // Single-utterance mode — avoids infinite listening
+    rec.interimResults = true; // Show partial transcripts while speaking
     rec.lang = lang ?? navigator.language ?? "en-US";
     rec.maxAlternatives = 1;
 
@@ -208,21 +271,42 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
         if (item.isFinal) final += item[0].transcript;
         else interim += item[0].transcript;
       }
-      setTranscript(final || interim);
-      if (final) {
-        setVoiceState("idle");
-        onTranscriptRef.current(final.trim());
-      }
+      // Accumulate final results; track last interim as iOS fallback
+      if (final) accumulatedFinalRef.current += final;
+      if (interim) lastInterimRef.current = interim;
+      // Show the most complete text available to the user
+      setTranscript(accumulatedFinalRef.current || interim);
     };
 
     rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+      // 'no-speech' and 'aborted' are normal — don't surface as errors
+      if (event.error === "no-speech" || event.error === "aborted") {
+        setVoiceState("idle");
+        setTranscript("");
+        return;
+      }
       setError(`Voice error: ${event.error}`);
       setVoiceState("error");
       setTranscript("");
     };
 
     rec.onend = () => {
+      // ── iOS Safari fix ────────────────────────────────────────────────
+      // On iOS, recognition may end without onresult ever firing isFinal=true.
+      // We submit whatever we accumulated: final transcript first, then fall
+      // back to the last interim result if nothing final was produced.
+      const accumulated = accumulatedFinalRef.current.trim();
+      const fallback    = lastInterimRef.current.trim();
+      accumulatedFinalRef.current = "";
+      lastInterimRef.current = "";
+
+      setTranscript("");
       setVoiceState((prev) => (prev === "listening" ? "idle" : prev));
+
+      const toSubmit = accumulated || fallback;
+      if (toSubmit) {
+        onTranscriptRef.current(toSubmit);
+      }
     };
 
     recognitionRef.current = rec;
@@ -234,7 +318,7 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     }
   }, [voiceState, lang, stopAudio]);
 
-  // ── stopListening ──────────────────────────────────────────────────────────
+  // ── stopListening ──────────────────────────────────────────────────────
 
   const stopListening = useCallback(() => {
     if (!recognitionRef.current) return;
@@ -243,7 +327,7 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     setVoiceState("idle");
   }, []);
 
-  // ── speak ──────────────────────────────────────────────────────────────────
+  // ── speak ──────────────────────────────────────────────────────────────
 
   const speak = useCallback(
     (text: string) => {
@@ -256,17 +340,17 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
       }
       stopAudio();
       if (hasSynthesis) window.speechSynthesis.cancel();
-
-      setVoiceState("speaking");
       setError(null);
+      // NOTE: We do NOT set voiceState="speaking" here.
+      // State only transitions to "speaking" when audio.play() actually resolves,
+      // preventing the UI from showing SPEAKING for audio that was never played.
 
       const clean = cleanForSpeech(text);
-      if (!clean) {
-        setVoiceState("idle");
-        return;
-      }
+      if (!clean) return;
 
-      // ── 1. Try ElevenLabs via backend ─────────────────────────────────────
+      // ── 1. Try ElevenLabs via backend ─────────────────────────────────
+      onTtsStageRef.current?.("requesting");
+
       fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -274,7 +358,6 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
       })
         .then(async (resp) => {
           if (!resp.ok) {
-            // Parse error info without exposing the raw response to users
             let msg = `HTTP ${resp.status}`;
             try {
               const data = (await resp.json()) as { error?: string };
@@ -285,38 +368,53 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
           return resp.blob();
         })
         .then((blob) => {
+          onTtsStageRef.current?.("received");
+
           const url = URL.createObjectURL(blob);
           audioBlobUrlRef.current = url;
 
           const audio = new Audio(url);
           audioRef.current = audio;
+          setTtsProvider("elevenlabs");
 
           audio.onended = () => {
             stopAudio();
+            onTtsStageRef.current?.("ended");
             setVoiceState("idle");
           };
 
           audio.onerror = () => {
             stopAudio();
+            onTtsStageRef.current?.("error");
             setError("ElevenLabs audio playback failed.");
             setVoiceState("error");
           };
 
-          setTtsProvider("elevenlabs");
-          audio.play().catch((playErr) => {
-            // play() can be blocked by browser autoplay policy
-            stopAudio();
-            console.warn("[JARVIS voice] Audio play() blocked:", playErr);
-            setError("Audio playback was blocked by the browser. Tap to speak again.");
-            setVoiceState("error");
-          });
+          // play() is async — enter SPEAKING only when it actually starts.
+          // On iOS, audio unlock (unlockAudio called during mic button press)
+          // must have run during a user gesture before this async call.
+          audio.play()
+            .then(() => {
+              setVoiceState("speaking");
+              onTtsStageRef.current?.("playing");
+            })
+            .catch((playErr) => {
+              stopAudio();
+              console.warn("[JARVIS voice] Audio play() blocked:", playErr);
+              onTtsStageRef.current?.("play_failed");
+              setError(
+                "Audio playback blocked. Tap the microphone button, wait for the response, then try again.",
+              );
+              setVoiceState("error");
+            });
         })
         .catch((err: unknown) => {
-          // ── 2. Fall back to browser SpeechSynthesis ───────────────────────
+          // ── 2. Fall back to browser SpeechSynthesis ───────────────────
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(
             `[JARVIS voice] ElevenLabs TTS unavailable (${msg}), falling back to browser SpeechSynthesis.`,
           );
+          onTtsStageRef.current?.("fallback");
 
           if (!hasSynthesis) {
             setError(`TTS unavailable: ${msg}`);
@@ -335,10 +433,12 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
             setVoiceState("speaking");
           };
           utterance.onend = () => {
+            onTtsStageRef.current?.("ended");
             setVoiceState("idle");
           };
           utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
             if (e.error !== "interrupted") {
+              onTtsStageRef.current?.("error");
               setError(`Browser TTS error: ${e.error}`);
               setVoiceState("error");
             } else {
@@ -353,7 +453,7 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     [lang, stopAudio],
   );
 
-  // ── cancelSpeaking ─────────────────────────────────────────────────────────
+  // ── cancelSpeaking ─────────────────────────────────────────────────────
 
   const cancelSpeaking = useCallback(() => {
     stopAudio();
@@ -373,5 +473,6 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     stopListening,
     speak,
     cancelSpeaking,
+    unlockAudio,
   };
 }

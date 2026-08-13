@@ -50,7 +50,7 @@ import { LiveTerminal, mkLine, type TerminalLine, type TerminalSeverity } from '
 import { AlertCard, mkAlert, type AlertEntry } from '@/components/jarvis/alert-card';
 import { ErrorDetailCard, type ExecutionDiagnostic } from '@/components/jarvis/error-detail-card';
 import { ResponseCard } from '@/components/jarvis/response-card';
-import { useVoice } from '@/hooks/use-voice';
+import { useVoice, type TTSStage } from '@/hooks/use-voice';
 
 // ── Provider helpers ─────────────────────────────────────────────────────────
 
@@ -202,6 +202,17 @@ export default function Home() {
       lastTranscriptRef.current = text;
       setGoal(text);
       pushLine('SPEECH', 'TRANSCRIBED', 'info');
+    }, [pushLine]),
+    onTtsStage: useCallback((stage: TTSStage) => {
+      switch (stage) {
+        case 'requesting':  pushLine('TTS',   'REQUESTING',      'normal');  break;
+        case 'received':    pushLine('AUDIO', 'RECEIVED',        'normal');  break;
+        case 'playing':     pushLine('AUDIO', 'PLAYING',         'success'); break;
+        case 'play_failed': pushLine('AUDIO', 'PLAY_FAILED',     'error');   break;
+        case 'fallback':    pushLine('TTS',   'BROWSER_FALLBACK','warning'); break;
+        case 'ended':       pushLine('AUDIO', 'ENDED',           'normal');  break;
+        default:            break;
+      }
     }, [pushLine]),
   });
 
@@ -498,6 +509,9 @@ export default function Home() {
     } else if (voice.isSpeaking) {
       voice.cancelSpeaking();
     } else if (ready) {
+      // Unlock iOS AudioContext during this user gesture so the subsequent
+      // async audio.play() call in speak() is permitted by Safari's autoplay policy.
+      voice.unlockAudio();
       voice.startListening();
     }
   }, [voice, ready]);

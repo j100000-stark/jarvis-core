@@ -33,7 +33,7 @@ class Settings:
     llm_model: str = "gpt-4o-mini"
     # Web research: safe HTTP fetch capability.
     # Disabled by default; enable with JARVIS_WEB_RESEARCH_ENABLED=true.
-    web_research_enabled: bool = False
+    web_research_enabled: bool = True
     # Network probe timeout for the network_status tool
     network_probe_timeout_seconds: float = 3.0
 

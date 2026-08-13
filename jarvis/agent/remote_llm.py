@@ -251,10 +251,17 @@ class MockLLMTransport:
 
 _AVAILABLE_TOOLS = """
 Available tools (use ONLY these exact tool_name values):
-  echo      Return text to the user. argument = text to show (required).
-  time      Return the current UTC time. argument = "" (leave empty).
-  remember  Store a fact persistently. argument = the fact to store (required).
-  recall    Search stored memories. argument = search query (use "" to list all).
+  echo            Return text to the user. argument = text to display (required).
+  time            Return the current UTC time. argument = "" (empty).
+  remember        Store a fact in persistent memory. argument = fact to save (required).
+  recall          Search persistent memory. argument = search term, or "" to list all.
+  calculate       Evaluate a mathematical expression. argument = e.g. "12 * 8 / 3 + 5".
+  analyze_text    Analyse text: word count, sentences, keywords. argument = text to analyse.
+  web_research    Search the web or fetch a URL. argument = query or full URL (required).
+  system_status   Report JARVIS system health and configuration. argument = "" (empty).
+  network_status  Check network connectivity. argument = "" (empty).
+  security_status Run a security scan. argument = "" (empty).
+  report          Generate a structured timestamped report. argument = topic or description.
 """
 
 _PLAN_SYSTEM = """\
@@ -264,19 +271,31 @@ Your only job in this message is to produce a structured execution plan as JSON.
 {tools}
 
 Strict rules:
-1. The "goal" field MUST be EXACTLY the goal string you are given — no paraphrasing,
-   no additions, no changes.  Copy it verbatim.
+1. The "goal" field MUST be EXACTLY the goal string you are given — copy it verbatim.
 2. Use ONLY the tool names listed above.  Never invent new tools.
 3. Step identifiers must be unique, non-empty, kebab-case (e.g. "step-1", "store-name").
 4. max_retries must be 0 or a positive integer.
-5. If the user wants to store a fact, use the "remember" tool.
-6. If the user asks about past facts, start with a "recall" step.
-7. Use "echo" to communicate information or results to the user.
-8. Keep plans short (1–4 steps).  Only include steps that directly serve the goal.
-9. Do NOT invent tool names, do NOT include shell commands or file operations.
-10. Return ONLY valid JSON — no prose, no markdown fences, no explanations.
+5. Keep plans short (1–4 steps).  Only include steps that directly serve the goal.
+6. Do NOT invent tool names, do NOT include shell commands or file operations.
+7. Return ONLY valid JSON — no prose, no markdown fences, no explanations.
+8. If you cannot complete the goal with the available tools, use "echo" to explain honestly.
+9. Never claim a web search occurred if web_research was not called.
+10. Never claim to remember something without using the "remember" tool.
 
-Relevant stored memories (use these to answer recall/name questions):
+Tool routing guidance (follow these even when the user writes in Italian or another language):
+  Store a fact / "ricordati" / "remember that"           → "remember"
+  Retrieve a fact / "come mi chiamo" / "what is my name" → start with "recall", then "echo"
+  Maths / "calcola" / "quanto fa" / expression           → "calculate"
+  Search online / "cerca" / "trova" / "notizie" / "meteo" / "prezzo" / current events
+                                                          → "web_research"
+  System health / "come stai" / "status" / diagnostics   → "system_status"
+  Network / "connessione" / ping                          → "network_status"
+  Security scan                                           → "security_status"
+  Analyse text / count words                              → "analyze_text"
+  Show result to user / any final output                  → "echo"
+  Missing capability → use "echo" to explain what is missing; do not fabricate.
+
+Relevant stored memories (use these to answer factual questions without a recall step):
 {memory}
 
 Required JSON format:

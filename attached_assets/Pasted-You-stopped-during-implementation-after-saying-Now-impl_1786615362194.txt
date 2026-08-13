@@ -1,0 +1,90 @@
+You stopped during implementation after saying:
+"Now implementing all fixes in parallel batches. Starting with the Python backend changes."
+
+Continue from exactly where you stopped.
+
+Do NOT restart the investigation from scratch and do NOT just describe what should be done.
+
+Implement all of the fixes you already identified:
+
+1. Deduplicate persistent memory:
+   - prevent identical memories from being stored repeatedly
+   - clean existing duplicates safely
+   - preserve unique memories across app restarts
+
+2. Expose ALL actually available tools to the LLM:
+   - web_research / web search
+   - calculate
+   - system_status
+   - time
+   - memory tools
+   - all other safe registered tools
+   - make sure the model can actually select and execute them
+
+3. Fix iOS Safari speech recognition:
+   - reliably capture the final transcript
+   - handle onresult + onend correctly
+   - don't remain stuck in LISTENING
+   - allow a new utterance after the previous one
+   - prevent duplicate submissions
+
+4. Fix ElevenLabs TTS:
+   - SPEAKING must only start when audio actually begins
+   - correctly handle iOS Safari playback restrictions
+   - keep the fallback to browser SpeechSynthesis
+   - make sure the user can actually hear JARVIS
+
+5. Enable real web research:
+   - the LLM must know the web tool exists
+   - it must be able to decide when current information requires web search
+   - execute the search and incorporate the results into the answer
+   - never pretend it searched if it didn't
+
+6. Implement the Self-Repair system:
+   - detect execution failures
+   - classify the failure
+   - inspect the relevant code/configuration
+   - generate a repair plan
+   - apply a minimal safe patch
+   - run targeted tests
+   - run the full test suite when appropriate
+   - verify the repair
+   - retry the original goal after successful repair
+   - record the incident and repair result
+   - if repair fails, stop safely and explain exactly why
+   - NEVER blindly rewrite unrelated code
+   - NEVER expose API keys or secrets
+   - add a safety limit on repair attempts to prevent infinite loops
+
+7. Self-creation / autonomy:
+   - when a requested capability is missing, JARVIS should diagnose what is missing and determine whether it can safely create the required component/tool/workflow
+   - it should produce an internal implementation plan before making changes
+   - it must verify the result instead of claiming success
+   - risky/destructive operations must require explicit confirmation
+
+8. UI integration:
+   - show real execution events in the Live Terminal
+   - show errors in red
+   - show recovery attempts in amber
+   - show successful recovery in green
+   - show which tool is being used
+   - show web search activity
+   - show self-repair activity
+   - do not fabricate terminal events
+
+9. Keep the existing cinematic UI and ElevenLabs integration intact.
+
+After implementation:
+- run all existing tests
+- add tests for every new behavior
+- run TypeScript checks
+- restart the workflows
+- perform real end-to-end tests through the API
+- test memory persistence
+- test web search
+- test a tool call
+- test a simulated failure and verify Self-Repair actually runs
+- test that the original goal is retried after repair
+- report exactly what changed and the final test count
+
+Do not stop at analysis. Continue through implementation, testing, workflow restart, and verification.

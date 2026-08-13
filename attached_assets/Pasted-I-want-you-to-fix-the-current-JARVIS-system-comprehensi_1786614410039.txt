@@ -1,0 +1,541 @@
+I want you to fix the current JARVIS system comprehensively before adding any new cosmetic features.
+
+IMPORTANT:
+Do not assume the current implementation is correct just because tests pass.
+First inspect the real execution path end-to-end, reproduce the problems on the running app, identify the root causes, then implement fixes.
+Do not remove working functionality.
+Do not fake successful states or fabricate terminal events.
+Do not expose chain-of-thought or private internal reasoning to the UI. The UI may show concise execution/activity status only.
+
+==================================================
+1. FIX REAL PERSISTENT MEMORY
+==================================================
+
+The current JARVIS can appear to remember information during a session but loses it after the app is restarted.
+
+Example:
+User says:
+"Ricordati il mio nome, Sandeep."
+
+After restarting the app:
+"Come mi chiamo?"
+
+JARVIS currently fails to reliably retrieve the saved name.
+
+Implement REAL persistent memory.
+
+Requirements:
+
+- Inspect the existing memory_store implementation first.
+- Determine why facts are not surviving process/app restarts.
+- Use a persistent local storage mechanism appropriate for the project (SQLite/local database/file-backed store, depending on the existing architecture).
+- Do NOT use only React state, Python process memory, or an in-memory dictionary.
+- Memory must survive:
+  - frontend reload
+  - API server restart
+  - app restart
+  - PC restart when running locally
+- Preserve the existing memory architecture where possible.
+
+Implement memory categories:
+
+USER_PROFILE
+PREFERENCES
+IMPORTANT_FACTS
+CONVERSATION_CONTEXT
+TASK_STATE
+
+For explicit requests such as:
+"ricordati che..."
+"ricorda..."
+"da ora in poi..."
+save the information persistently.
+
+For normal conversation, do NOT save every message.
+
+When answering a memory question:
+1. Query persistent memory.
+2. Use the stored fact.
+3. If the fact does not exist, explicitly say that it is not known.
+
+Add tests:
+
+- save fact
+- retrieve fact
+- persistence across process restart
+- update fact
+- delete fact
+- no duplicate memory spam
+- memory retrieval after API restart
+
+VERY IMPORTANT:
+The current test/demo output contains repeated fake-looking entries such as:
+
+#55: User's name is Sandeep
+#54: my name is San
+#53: my name is San
+#52: the sky is blue
+...
+
+This MUST NOT appear in normal JARVIS responses.
+
+Find the source of these repeated entries.
+If they come from a benchmark/test/demo harness, isolate them from production execution.
+Production responses must contain only the actual result relevant to the user's goal.
+
+==================================================
+2. FIX SPEECH RECOGNITION / LISTENING
+==================================================
+
+Current behavior on iPhone:
+
+- JARVIS enters LISTENING.
+- User speaks.
+- User stops speaking.
+- JARVIS continues showing LISTENING.
+- The transcript is not reliably produced.
+- Speaking again does not reliably produce new transcription.
+
+Fix the entire STT lifecycle.
+
+Desired behavior:
+
+MIC BUTTON
+↓
+LISTENING
+↓
+speech detected
+↓
+interim transcript
+↓
+user stops speaking
+↓
+silence detection / recognition end
+↓
+FINAL TRANSCRIPT
+↓
+REQUEST SENT
+↓
+LISTENING STOPS
+↓
+THINKING / PROCESSING
+↓
+RESPONSE
+↓
+TTS
+↓
+IDLE
+
+Requirements:
+
+- Do NOT leave SpeechRecognition permanently listening.
+- Correctly handle:
+  onstart
+  onaudiostart
+  onspeechstart
+  onresult
+  onspeechend
+  onerror
+  onend
+- Always clean up recognition instances.
+- Prevent multiple recognition instances from running simultaneously.
+- Handle iOS Safari behavior correctly.
+- Use final transcript results, not only interim results.
+- Add a reasonable silence timeout so the user does not need to manually stop listening.
+- If the browser ends recognition automatically, process the accumulated final transcript.
+- If recognition errors, show a clear terminal event and recovery state.
+- Allow the user to speak again after a completed request.
+- Do not automatically restart listening forever.
+
+If native browser STT is unreliable on the current device/browser:
+implement a fallback architecture using server-side audio transcription, while keeping the existing browser STT when it works.
+
+The microphone button must never get stuck in LISTENING.
+
+Add tests for:
+
+- start listening
+- final transcript
+- silence
+- recognition end
+- recognition error
+- second consecutive request
+- cleanup
+- duplicate recognition prevention
+
+==================================================
+3. FIX ELEVENLABS TTS COMPLETELY
+==================================================
+
+JARVIS currently reaches the response stage but the user cannot reliably hear the generated voice.
+
+Trace the complete pipeline:
+
+JARVIS response
+→ cleanForSpeech()
+→ /api/tts
+→ ElevenLabs
+→ audio/mpeg
+→ browser
+→ iOS Safari
+→ playback
+→ SPEAKING
+→ IDLE
+
+Verify every stage.
+
+Requirements:
+
+- Keep ELEVENLABS_API_KEY server-side.
+- Never expose the API key to the frontend.
+- Keep ELEVENLABS_MODEL configurable.
+- Keep ELEVENLABS_VOICE_ID configurable.
+- Verify the configured voice ID is actually passed to the server route.
+- Verify the ElevenLabs response contains valid audio.
+- Verify content type.
+- Verify non-empty audio.
+- Correctly create/revoke Blob URLs.
+- Handle HTMLAudioElement.play() failures.
+- Handle iOS Safari autoplay restrictions.
+- Unlock audio playback from the user's microphone/button gesture when possible.
+- Do not start playback without a valid audio source.
+- Wait for actual audio playback events before marking SPEAKING.
+- Set IDLE only after audio playback actually ends.
+- If ElevenLabs fails, use browser SpeechSynthesis as fallback.
+- Clearly report TTS fallback in the activity terminal.
+
+Do not falsely show:
+SPEAKING
+
+if no audio is actually playing.
+
+Add diagnostics for:
+
+TTS_REQUEST
+TTS_RESPONSE
+AUDIO_RECEIVED
+AUDIO_PLAY
+AUDIO_PLAY_FAILED
+TTS_FALLBACK
+AUDIO_ENDED
+
+==================================================
+4. BUILD REAL WEB SEARCH
+==================================================
+
+JARVIS needs a real web research capability.
+
+Add a proper web_search tool to the agent/tool architecture.
+
+When the user asks things such as:
+
+"cerca online..."
+"cosa è successo oggi..."
+"trova..."
+"quanto costa..."
+"controlla..."
+"dimmi le ultime notizie..."
+"cerca questo sito..."
+"confronta..."
+
+JARVIS should recognize that external information is required and use the web search tool.
+
+Requirements:
+
+- Do not claim to have searched if no search actually occurred.
+- Return source URLs/titles where appropriate.
+- Distinguish:
+  INTERNAL MEMORY
+  WEB SEARCH
+  TOOL RESULT
+- Use search only when useful.
+- Do not search for simple questions that can be answered from the model's knowledge unless freshness is required.
+- Handle search failures gracefully.
+- Handle no-result searches.
+- Avoid infinite search loops.
+- Allow multiple searches when necessary.
+- Summarize results instead of dumping raw pages.
+
+Create a clean tool interface such as:
+
+web_search(query)
+web_open(url)
+web_extract(url)
+
+Use the provider/API that best fits the existing environment and configure it through secrets/configuration.
+
+Do not hard-code API keys.
+
+==================================================
+5. IMPLEMENT REAL SELF-REPAIR
+==================================================
+
+JARVIS needs a controlled self-repair system.
+
+IMPORTANT:
+"Self-repair" does NOT mean unrestricted arbitrary code execution.
+
+Build a safe repair pipeline:
+
+ERROR
+↓
+DIAGNOSTICS
+↓
+CLASSIFY
+↓
+GENERATE REPAIR PLAN
+↓
+VALIDATE PLAN
+↓
+APPLY PATCH IN SANDBOX
+↓
+RUN TESTS
+↓
+IF TESTS PASS → STAGE/ACTIVATE
+IF TESTS FAIL → ROLLBACK
+↓
+REPORT RESULT
+
+The system should be able to detect problems such as:
+
+- missing configuration
+- broken tool
+- API integration failure
+- Python exception
+- TypeScript error
+- failing test
+- malformed response
+- unavailable dependency
+- broken route
+- invalid schema
+- STT/TTS failure
+- web search failure
+
+When an error happens, JARVIS should create a concise repair plan.
+
+Example activity:
+
+> ERROR detected: TTS_PLAYBACK_FAILED
+> COMPONENT: voice
+> DIAGNOSING...
+> ROOT CAUSE IDENTIFIED
+> REPAIR PLAN CREATED
+> PATCHING...
+> TESTING...
+> TESTS PASSED
+> RECOVERY COMPLETE
+
+Do NOT display private chain-of-thought.
+
+Only display short operational summaries.
+
+Safety requirements:
+
+- Never modify secrets.
+- Never expose API keys.
+- Never delete the whole project.
+- Never overwrite unrelated files.
+- Never run destructive commands without explicit authorization.
+- Use a sandbox/worktree/temp copy for repairs.
+- Create backups/checkpoints before applying changes.
+- Run targeted tests first.
+- Run the full test suite before activation when practical.
+- Automatically rollback failed repairs.
+- Record repair incidents locally.
+
+Add a RepairManager / SelfRepairManager with clear states:
+
+IDLE
+DIAGNOSING
+PLANNING
+PATCHING
+TESTING
+VERIFYING
+RECOVERED
+FAILED
+ROLLED_BACK
+
+==================================================
+6. GIVE JARVIS BETTER TOOL AUTONOMY
+==================================================
+
+JARVIS should not require a manually hardcoded response path for every possible request.
+
+Implement a tool registry.
+
+Each tool should expose:
+
+name
+description
+input schema
+permissions
+execute()
+health_check()
+
+The planner should choose tools based on the user's goal.
+
+Example:
+
+User:
+"Che tempo fa a Milano?"
+
+JARVIS:
+→ web/weather tool if available
+→ retrieve result
+→ answer
+
+User:
+"Cerca online il prezzo di X"
+
+JARVIS:
+→ web_search
+→ possibly web_open
+→ summarize
+
+User:
+"Ricordati che..."
+
+JARVIS:
+→ persistent memory
+
+User:
+"Calcola..."
+
+JARVIS:
+→ calculator
+
+User:
+"Controlla se il sistema funziona"
+
+JARVIS:
+→ diagnostics/health tools
+
+Do NOT fabricate a tool result.
+
+If a required capability is unavailable, JARVIS should say:
+
+"Non ho ancora questo strumento configurato. Posso preparare un piano per aggiungerlo."
+
+If the self-repair system is allowed to implement a missing capability, it may create it in the sandbox, test it, and only activate it after verification.
+
+==================================================
+7. REAL EXECUTION TERMINAL
+==================================================
+
+Keep the cinematic terminal UI.
+
+But every terminal event must correspond to an actual backend/frontend state.
+
+Examples:
+
+> INPUT ........ RECEIVED
+> SPEECH ....... TRANSCRIBED
+> MEMORY ....... LOOKUP
+> PLAN ......... CREATED
+> WEB .......... SEARCHING
+> TOOL ......... EXECUTING
+> GROQ ......... PROCESSING
+> RESPONSE ..... GENERATED
+> TTS .......... SYNTHESIZING
+> AUDIO ........ PLAYING
+> SYSTEM ....... NOMINAL
+
+Errors:
+
+> ERROR ........ WEB_SEARCH_FAILED
+
+Recovery:
+
+> RECOVERY ..... DIAGNOSING
+> REPAIR ....... TESTING
+> RECOVERY ..... COMPLETE
+
+Use colors:
+
+normal = blue
+success = green
+warning = amber
+error = red
+critical = deep red
+
+Never fabricate activity just to make the interface look alive.
+
+The neural core can animate continuously, but execution events must remain truthful.
+
+==================================================
+8. FIX THE CURRENT "GOAL COMPLETED" BEHAVIOR
+==================================================
+
+Currently JARVIS can respond with:
+
+"Goal completed: Risolvi tutti i problemi da solo"
+
+followed by asking the user to specify the problems.
+
+This is not useful.
+
+Improve goal interpretation.
+
+For vague goals:
+
+"Risolvi tutti i problemi da solo"
+
+JARVIS should inspect system health and identify actual problems.
+
+Example:
+
+> GOAL RECEIVED
+> SYSTEM DIAGNOSTICS
+> 2 ISSUES DETECTED
+> PRIORITY ANALYSIS
+> REPAIR PLAN CREATED
+
+Then either:
+- repair them automatically if permitted
+- or explain exactly what needs authorization.
+
+Do not mark a goal "completed" if it was not actually completed.
+
+==================================================
+9. TEST EVERYTHING END-TO-END
+==================================================
+
+After implementation:
+
+1. Run all existing tests.
+2. Add tests for memory persistence.
+3. Add STT lifecycle tests.
+4. Add TTS playback/error tests.
+5. Add web-search tool tests.
+6. Add self-repair tests.
+7. Add rollback tests.
+8. Add tool-selection tests.
+9. Run TypeScript checks.
+10. Restart API/frontend workflows.
+11. Test the real running application.
+12. Verify a real Groq request.
+13. Verify a real ElevenLabs request if configured.
+14. Verify memory survives restart.
+15. Verify a second voice request works after the first.
+16. Verify errors produce real recovery states.
+
+Do not tell me "done" until the actual running application has been tested.
+
+At the end provide:
+
+- root causes found
+- files changed
+- features implemented
+- tests passed
+- tests failed, if any
+- remaining limitations
+- exact steps for me to test on iPhone
+
+Most importantly:
+
+DO NOT rewrite working architecture unnecessarily.
+Inspect first.
+Diagnose first.
+Implement second.
+Test third.
+Only then report completion.

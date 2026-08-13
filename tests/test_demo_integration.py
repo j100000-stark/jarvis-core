@@ -378,9 +378,19 @@ class TestMemory(unittest.TestCase):
 
     def test_memory_count_increases(self) -> None:
         assistant = _make_assistant(demo_mode=True)
+        # Use a fact unlikely to already exist in persistent memory.
+        # Deduplication means a repeated fact does not increment the count.
+        unique_fact = "test-unique-fact-memory-count-xyz99"
+        # Clean up any previous test residue
+        records = assistant.memory.search(unique_fact)
+        for r in records:
+            assistant.memory.forget(r.identifier)
         before = assistant.memory.count()
-        assistant.respond("remember the sky is blue")
+        assistant.respond(f"remember {unique_fact}")
         self.assertEqual(assistant.memory.count(), before + 1)
+        # Cleanup
+        for r in assistant.memory.search(unique_fact):
+            assistant.memory.forget(r.identifier)
 
     def test_demo_memory_goal_steps(self) -> None:
         """Memory demo goal executes echo steps, not real MemoryManager calls."""

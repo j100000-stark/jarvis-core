@@ -315,9 +315,12 @@ def _make_assistant():
     Uses __new__ to avoid touching the filesystem or network during __init__.
     All attributes that execute_goal_structured / run_goal access must be set.
     """
+    import tempfile
+    from pathlib import Path
     from jarvis.core.assistant import Assistant
     from jarvis.config.settings import Settings
     from jarvis.recovery.manager import RecoveryManager
+    from jarvis.recovery.self_repair import SelfRepairManager
 
     settings = Settings(demo_mode=False)
     assistant = Assistant.__new__(Assistant)
@@ -329,6 +332,11 @@ def _make_assistant():
     # sandbox is accessed inside ToolContext passed to executor.execute
     assistant.sandbox        = MagicMock()
     assistant.crash_recovery = MagicMock()
+    # tools is accessed by self_repair.diagnose_and_repair
+    assistant.tools          = MagicMock()
+    assistant.tools.names    = MagicMock(return_value=[])
+    # self_repair must be initialised for execute_goal_structured
+    assistant.self_repair    = SelfRepairManager(Path(tempfile.mkdtemp()))
     return assistant
 
 

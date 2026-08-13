@@ -34,10 +34,30 @@ class MemoryStore:
         self._load()
 
     def remember(self, content: str, tier: str = "long_term") -> MemoryRecord:
-        """Persist a new memory and return it."""
+        """Persist a memory and return it — upsert on exact content match.
+
+        If a record with identical normalised content already exists in the
+        same tier, its timestamp is refreshed and it is returned without
+        creating a duplicate entry.  This prevents the memory file from
+        accumulating hundreds of identical facts across sessions.
+        """
         cleaned = " ".join(content.split())
         if not cleaned:
             raise ValueError("Memory content cannot be empty.")
+
+        # Upsert: refresh timestamp of an existing identical record in this tier.
+        normalized = cleaned.casefold()
+        for idx, existing in enumerate(self._records):
+            if existing.tier == tier and existing.content.casefold() == normalized:
+                updated = MemoryRecord(
+                    identifier=existing.identifier,
+                    content=cleaned,
+                    created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                    tier=tier,
+                )
+                self._records[idx] = updated
+                self._save()
+                return updated
 
         next_id = max((record.identifier for record in self._records), default=0) + 1
         record = MemoryRecord(
@@ -47,7 +67,8 @@ class MemoryStore:
             tier=tier,
         )
         self._records.append(record)
-        self._records = self._records[-self.max_items :]
+        if self.max_items > 0:
+            self._records = self._records[-self.max_items :]
         self._save()
         return record
 

@@ -25,7 +25,7 @@ from ..config import Settings
 from ..memory import MemoryManager
 from ..network.manager import NetworkManager
 from ..network.recovery import NetworkRecoveryManager
-from ..recovery import RecoveryManager
+from ..recovery import RecoveryManager, SelfRepairManager
 from ..resilience import (
     CrashRecoveryManager,
     HealthCheckManager,
@@ -58,6 +58,8 @@ class Assistant:
     crash_recovery: CrashRecoveryManager = field(init=False)
     health_checks: HealthCheckManager = field(init=False)
     network_recovery: NetworkRecoveryManager = field(init=False)
+    # Self-repair subsystem
+    self_repair: SelfRepairManager = field(init=False)
 
     def __post_init__(self) -> None:
         # --- Brain selection ---
@@ -96,6 +98,9 @@ class Assistant:
             probe_hosts=("1.1.1.1", "8.8.8.8"),
             max_reconnect_attempts=5,
         )
+
+        # --- Self-repair ---
+        self.self_repair = SelfRepairManager(self.settings.data_dir)
 
         # Register basic health checks
         self.health_checks.register(
@@ -184,20 +189,20 @@ class Assistant:
             )
 
     def execute_goal_structured(self, goal: str) -> dict:
-        """Run a goal through Planner → Executor and return structured JSON-serialisable details.
+        """Run a goal through Planner → Executor with one self-repair attempt on failure.
 
-        Delegates to run_goal() so the demo-mode Planner bypass is applied
-        automatically.  Returns a dict with the full execution trace: per-step
-        results with tool output and verification, overall success, and
-        demo-mode labelling.  Never fabricates results.
+        Flow:
+          1. Attempt goal with current settings.
+          2. On exception or semantic failure: diagnose → repair → retry once.
+          3. Return a structured dict with the full execution trace.
+        Never fabricates results or swallows errors silently.
         """
-        try:
-            # run_goal() handles the demo-mode Planner bypass internally
-            report = self.run_goal(goal)
-            # Recover the plan goal from the report (stored in ExecutionReport.goal)
-            plan_goal = report.goal
-            plan_provider = getattr(self.brain, "provider_name", "unknown")
-            execution_steps = [
+        # Reset repair attempt counter so each new goal gets a fresh budget.
+        self.self_repair.reset_attempts()
+        repair_notes: list[str] = []
+
+        def _build_steps(report: ExecutionReport) -> list[dict]:
+            return [
                 {
                     "stepId": sr.step.identifier,
                     "objective": sr.step.objective,
@@ -209,54 +214,72 @@ class Assistant:
                 }
                 for sr in report.steps
             ]
-            return {
-                "success": report.success,
-                "goal": goal,
-                "response": self._format_execution_report(report),
-                "providerName": plan_provider,
-                "demoMode": self.settings.demo_mode,
-                "demoLabel": DEMO_LABEL if self.settings.demo_mode else None,
-                "planGoal": plan_goal,
-                "planProvider": plan_provider,
-                "executionSteps": execution_steps,
-                "failure": report.failure,
-            }
-        except Exception as error:
-            incident = self.recovery.record(error, operation="execute_goal_structured")
 
-            # Find the innermost executor step that failed, if any.
-            # The executor records "step:<id>" incidents before the outer catch
-            # fires, so the second-to-last incident (if it exists) may carry it.
-            failing_step: str | None = None
-            all_incidents = list(self.recovery._incidents)  # noqa: SLF001
-            for past in reversed(all_incidents[:-1]):  # skip the one we just recorded
-                if past.operation.startswith("step:") or past.operation.startswith("retry:"):
-                    failing_step = past.operation.split(":", 1)[-1]
-                    break
-
-            from ..diagnostics import build_execution_error
-            exec_error = build_execution_error(
-                incident,
+        # ── First attempt ─────────────────────────────────────────────────
+        effective_settings = self.settings
+        try:
+            report = self._run_goal_with_settings(goal, effective_settings)
+        except Exception as first_error:
+            incident = self.recovery.record(first_error, operation="execute_goal_structured")
+            repair = self.self_repair.diagnose_and_repair(
+                failure_message=str(first_error),
+                failure_step=None,
                 goal=goal,
-                failing_step=failing_step,
+                settings=effective_settings,
+                registry=self.tools,
             )
+            repair_notes = repair.actions
 
-            return {
-                "success": False,
-                "goal": goal,
-                "response": (
-                    f"Goal execution failed: {exec_error['type']} in {exec_error['component']}."
-                    f" Incident #{incident.identifier} recorded."
-                ),
-                "providerName": getattr(self.brain, "provider_name", "unknown"),
-                "demoMode": self.settings.demo_mode,
-                "demoLabel": DEMO_LABEL if self.settings.demo_mode else None,
-                "planGoal": None,
-                "planProvider": None,
-                "executionSteps": [],
-                "failure": exec_error["message"],
-                "error": exec_error,
-            }
+            if repair.success:
+                effective_settings = repair.repaired_settings or effective_settings
+                try:
+                    report = self._run_goal_with_settings(goal, effective_settings)
+                except Exception as retry_error:
+                    incident2 = self.recovery.record(retry_error, "execute_goal_structured:retry")
+                    return self._error_result(goal, incident2, None, repair_notes)
+            else:
+                return self._error_result(goal, incident, self._find_failing_step(), repair_notes)
+
+        # ── Semantic failure: executor returned success=False ──────────────
+        if not report.success and report.failure:
+            repair = self.self_repair.diagnose_and_repair(
+                failure_message=report.failure,
+                failure_step=None,
+                goal=goal,
+                settings=effective_settings,
+                registry=self.tools,
+            )
+            repair_notes.extend(repair.actions)
+
+            if repair.success:
+                effective_settings = repair.repaired_settings or effective_settings
+                try:
+                    report = self._run_goal_with_settings(goal, effective_settings)
+                except Exception as repair_err:
+                    incident3 = self.recovery.record(repair_err, "execute_goal_structured:semantic_repair")
+                    return self._error_result(goal, incident3, None, repair_notes)
+
+        # ── Build success (or unrecoverable failure) result ───────────────
+        plan_provider = getattr(self.brain, "provider_name", "unknown")
+        execution_steps = _build_steps(report)
+        response = self._format_execution_report(report)
+        if repair_notes:
+            concise = "; ".join(n for n in repair_notes[:2] if n)
+            response = f"[Self-repair: {concise}] {response}"
+
+        return {
+            "success": report.success,
+            "goal": goal,
+            "response": response,
+            "providerName": plan_provider,
+            "demoMode": self.settings.demo_mode,
+            "demoLabel": DEMO_LABEL if self.settings.demo_mode else None,
+            "planGoal": report.goal,
+            "planProvider": plan_provider,
+            "executionSteps": execution_steps,
+            "failure": report.failure,
+            "repairNotes": repair_notes if repair_notes else None,
+        }
 
     def run_goal(self, goal: str) -> ExecutionReport:
         """Plan and execute a high-level goal through the safe tool boundary.
@@ -266,19 +289,65 @@ class Assistant:
         fail the Planner's exact-equality check.  All other safety gates
         (sandbox, tool boundary, executor) remain active.
         """
-        if self.settings.demo_mode:
+        return self._run_goal_with_settings(goal, self.settings)
+
+    def _run_goal_with_settings(self, goal: str, settings: Settings) -> ExecutionReport:
+        """Execute a goal using the supplied settings (allows patched settings on retry).
+
+        This is the single code-path that builds a ToolContext so that any
+        patched settings (e.g. web_research_enabled=True after self-repair)
+        are correctly passed down to every tool.
+        """
+        if settings.demo_mode:
             # Bypass Planner validation for DemoBrain — it prefixes plan.goal
             plan = self.brain.plan(goal, tuple(self.memory.context_for(goal)))
         else:
             plan = self.planner.create_plan(goal)
         return self.executor.execute(
             plan,
-            ToolContext(
-                settings=self.settings,
-                memory=self.memory,
-                sandbox=self.sandbox,
-            ),
+            ToolContext(settings=settings, memory=self.memory, sandbox=self.sandbox),
         )
+
+    def _find_failing_step(self) -> str | None:
+        """Return the identifier of the most recent failing executor step."""
+        all_incidents = list(self.recovery._incidents)  # noqa: SLF001
+        for past in reversed(all_incidents[:-1]):
+            if past.operation.startswith("step:") or past.operation.startswith("retry:"):
+                return past.operation.split(":", 1)[-1]
+        return None
+
+    def _error_result(
+        self,
+        goal: str,
+        incident: object,
+        failing_step: str | None,
+        repair_notes: list[str],
+    ) -> dict:
+        """Build a structured error response from a recorded incident."""
+        from ..diagnostics import build_execution_error, sanitize_message
+        exec_error = build_execution_error(
+            incident,  # type: ignore[arg-type]
+            goal=goal,
+            failing_step=failing_step,
+        )
+        clean_notes = [sanitize_message(n) for n in repair_notes] if repair_notes else None
+        return {
+            "success": False,
+            "goal": goal,
+            "response": (
+                f"Goal execution failed: {exec_error['type']} in {exec_error['component']}."
+                f" Incident #{exec_error.get('incidentId', '?')} recorded."
+            ),
+            "providerName": getattr(self.brain, "provider_name", "unknown"),
+            "demoMode": self.settings.demo_mode,
+            "demoLabel": DEMO_LABEL if self.settings.demo_mode else None,
+            "planGoal": None,
+            "planProvider": None,
+            "executionSteps": [],
+            "failure": exec_error["message"],
+            "error": exec_error,
+            "repairNotes": clean_notes,
+        }
 
     @staticmethod
     def _format_execution_report(report: ExecutionReport) -> str:
