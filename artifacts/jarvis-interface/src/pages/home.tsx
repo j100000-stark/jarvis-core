@@ -100,7 +100,8 @@ function deriveCoreState(
   if (isLoading || !connected)     return 'offline';
   if (isListening)                 return 'listening';
   if (isSpeaking || ttsActive)     return 'speaking';
-  if (pending)                     return 'thinking';
+  // A goal in flight = EXECUTING (plan running in the Python runtime).
+  if (pending)                     return 'executing';
   if (alertPulse)                  return 'alert';
   return 'idle';
 }
@@ -512,8 +513,10 @@ export default function Home() {
   // ── Send error events ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!sendMessage.error) return;
-    const e = sendMessage.error as { error?: string; message?: string };
-    const msg = e.error ?? e.message ?? 'Unknown error';
+    const e = sendMessage.error as {
+      data?: { error?: string }; error?: string; message?: string;
+    };
+    const msg = e.data?.error ?? e.error ?? e.message ?? 'Unknown error';
     pushLine('REQUEST', 'FAILED', 'error');
     pushAlert('Request Failed', msg, 'error');
     triggerAlertPulse();
@@ -719,8 +722,10 @@ export default function Home() {
   // ── Send error for chat sheet ─────────────────────────────────────────────
   const sendError = useMemo(() => {
     if (!sendMessage.error) return null;
-    const e = sendMessage.error as { error?: string; message?: string };
-    return e.error ?? e.message ?? 'The runtime rejected that goal.';
+    const e = sendMessage.error as {
+      data?: { error?: string }; error?: string; message?: string;
+    };
+    return e.data?.error ?? e.error ?? e.message ?? 'The runtime rejected that goal.';
   }, [sendMessage.error]);
 
   // ── Live transcript preview ───────────────────────────────────────────────

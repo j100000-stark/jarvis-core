@@ -87,6 +87,8 @@ class Assistant:
         self.tools: ToolRegistry = build_default_registry()
         self.rollback = RollbackManager(self.sandbox)
         self.planner = Planner(self.brain, self.memory)
+        # Reject plans that name nonexistent tools BEFORE any step executes.
+        self.planner.set_known_tools(tuple(self.tools.names()))
         self.executor = AgentExecutor(self.tools, self.recovery)
         self.monitor = SystemMonitor(self.settings.data_dir.parent)
 
@@ -392,6 +394,68 @@ class Assistant:
             ]
         )
 
+    def _network_report(self) -> dict:
+        """Live network state with a DISK-persisted 60 s cache.
+
+        Each API request runs in a fresh Python process, so an in-memory
+        cache would never hit; the cache file makes repeated panel polls
+        fast and bounds probing to at most once per minute. Results are
+        only ever from a real probe — never fabricated. On probe failure,
+        the last cached host data is retained (honestly labeled).
+        """
+        import json as _json
+        import time as _time
+
+        cache_file = self.settings.data_dir / "network_probe_cache.json"
+        now = _time.time()
+        cached: dict | None = None
+        try:
+            data = _json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and now - float(data.get("ts", 0)) < 60.0:
+                cached = data
+        except Exception:
+            cached = None
+
+        if cached is not None:
+            return {
+                "connectivity": str(cached.get("connectivity", "unknown")),
+                "reachableHosts": list(cached.get("reachable", [])),
+                "unreachableHosts": list(cached.get("unreachable", [])),
+                "details": "Live probe result (cached up to 60 s).",
+            }
+
+        try:
+            state = self.network_recovery.probe()
+            record = {
+                "ts": now,
+                "connectivity": state.connectivity.value,
+                "reachable": list(state.reachable_hosts),
+                "unreachable": list(state.unreachable_hosts),
+            }
+            try:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(_json.dumps(record), encoding="utf-8")
+            except Exception:
+                pass  # cache is an optimization only
+            return {
+                "connectivity": state.connectivity.value,
+                "reachableHosts": record["reachable"],
+                "unreachableHosts": record["unreachable"],
+                "details": "Live probe result (cached up to 60 s).",
+            }
+        except Exception:
+            net = self.network_recovery.connectivity
+            return {
+                "connectivity": net.value,
+                "reachableHosts": [],
+                "unreachableHosts": [],
+                "details": (
+                    "No live network probe has run yet — state is UNKNOWN."
+                    if net.value == "unknown"
+                    else "Probe failed; showing last-known state."
+                ),
+            }
+
     def system_report(self) -> dict:
         """Return a comprehensive system state dict for the web interface.
 
@@ -411,20 +475,11 @@ class Assistant:
             for s in health_statuses
         ]
 
-        # Network — return last-known state without blocking probe.
-        # UNKNOWN is reported honestly when no live probe has run yet;
-        # OFFLINE is only ever shown as the result of a real failed probe.
-        net = self.network_recovery.connectivity
-        network = {
-            "connectivity": net.value,
-            "reachableHosts": [],
-            "unreachableHosts": [],
-            "details": (
-                "No live network probe has run yet — state is UNKNOWN."
-                if net.value == "unknown"
-                else "Last-known network state from the most recent live probe."
-            ),
-        }
+        # Network — run a REAL bounded probe, cached for 60 s so repeated
+        # report requests stay fast. OFFLINE/ONLINE/DEGRADED are only ever
+        # the result of a live probe; UNKNOWN appears only if probing itself
+        # failed unexpectedly before completing once.
+        network = self._network_report()
 
         # Recovery incidents from crash recovery
         crm_incidents = self.crash_recovery.all_incidents()[-10:]

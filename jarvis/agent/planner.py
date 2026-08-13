@@ -14,6 +14,14 @@ class Planner:
         self.brain = brain
         self.memory = memory
 
+    def set_known_tools(self, names: tuple[str, ...]) -> None:
+        """Register the set of tools a plan is allowed to reference.
+
+        With this set, plans naming a nonexistent tool are rejected UP FRONT
+        instead of failing mid-execution after earlier steps already ran.
+        """
+        self._known_tools = tuple(n.casefold() for n in names)
+
     def create_plan(self, goal: str) -> Plan:
         """Create a plan using relevant local memory as context."""
         cleaned_goal = " ".join(goal.split())
@@ -30,7 +38,22 @@ class Planner:
             tuple(record.content for record in context),
         )
         self._validate(plan, cleaned_goal)
+        self._validate_tools(plan)
         return plan
+
+    def _validate_tools(self, plan: Plan) -> None:
+        known = getattr(self, "_known_tools", ())
+        if not known:
+            return
+        unknown = sorted(
+            {s.tool_name for s in plan.steps if s.tool_name.casefold() not in known}
+        )
+        if unknown:
+            raise ValueError(
+                "Plan rejected before execution: it references tools that do "
+                f"not exist: {', '.join(unknown)}. Available tools: "
+                f"{', '.join(known)}."
+            )
 
     @staticmethod
     def _validate(plan: Plan, goal: str) -> None:

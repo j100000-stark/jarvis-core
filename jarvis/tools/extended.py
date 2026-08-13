@@ -260,13 +260,82 @@ class _TextExtractor(HTMLParser):
         return " ".join(self._parts)[:max_chars]
 
 
+def _assert_public_http_url(url: str) -> None:
+    """SSRF guard: only public http(s) hosts may be fetched.
+
+    Rejects non-http(s) schemes and hosts that resolve to loopback, private,
+    link-local, or otherwise non-global addresses so the research tool can
+    never be used to reach internal services or the metadata endpoint.
+    """
+    import ipaddress
+    import socket
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Only http/https URLs are allowed (got {parsed.scheme!r}).")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no hostname.")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise ValueError(f"Could not resolve host {host!r}: {exc}") from exc
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0])
+        if not addr.is_global:
+            raise ValueError(
+                f"Refusing to fetch {host!r}: resolves to a non-public address."
+            )
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Disable automatic redirects so every hop is re-validated manually."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_MAX_REDIRECTS = 3
+
+
+def _open_no_redirect(req: urllib.request.Request, timeout: float):
+    """Open a request WITHOUT following redirects (patchable test seam)."""
+    opener = urllib.request.build_opener(_NoRedirect())
+    return opener.open(req, timeout=timeout)
+
+
 def _fetch_url(url: str, timeout: float = 8.0) -> str:
-    """Fetch a URL and return plain-text excerpt.  Raises on failure."""
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "JARVIS/1.0 (research tool; read-only)"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    """Fetch a URL and return plain-text excerpt.  Raises on failure.
+
+    Every redirect hop is validated against the SSRF guard — urllib's
+    automatic redirect following is disabled so a public URL can never
+    bounce the request to a private/loopback/metadata address.
+    (Note: DNS rebinding between validation and connect remains a narrow
+    inherent limitation of resolve-then-fetch; redirects — the practical
+    attack path — are fully revalidated.)
+    """
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        _assert_public_http_url(current)
+        req = urllib.request.Request(
+            current,
+            headers={"User-Agent": "JARVIS/1.0 (research tool; read-only)"},
+        )
+        try:
+            resp = _open_no_redirect(req, timeout)
+        except urllib.error.HTTPError as err:
+            if err.code in (301, 302, 303, 307, 308):
+                location = err.headers.get("Location")
+                if not location:
+                    raise ValueError("Redirect without a Location header.") from err
+                current = urllib.parse.urljoin(current, location)
+                continue
+            raise
+        break
+    else:
+        raise ValueError(f"Too many redirects (>{_MAX_REDIRECTS}) fetching {url}")
+
+    with resp:
         content_type = resp.headers.get_content_type() or ""
         raw = resp.read(65536).decode("utf-8", errors="replace")
 

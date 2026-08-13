@@ -21,6 +21,13 @@ description: Rules for the frontend reconnect watchdog, single-source outage rep
 - Generated patches echoing a live env secret are rejected via `contains_env_secret` (fail closed) — never sanitize patch content in place, reject instead.
 - Untrusted data goes inside `<untrusted-data>` delimiters; total prompt honors max_context_chars with per-file budget split.
 
+# Full-system-audit lessons (Aug 2026)
+- Each API request spawns a FRESH Python process (`spawnSync python -m jarvis`), so in-memory caches in Assistant never hit across requests — persist caches to data_dir files (e.g. network_probe_cache.json, 60 s TTL).
+- Web-research SSRF guard: validating only the initial URL is bypassable via redirects; urllib follows them automatically — disable redirects (_NoRedirect handler) and re-validate every hop; keep `_open_no_redirect` as the patchable test seam.
+- Planner rejects plans naming unknown tools BEFORE execution (set_known_tools from registry) — prevents partial-execution failures.
+- web_research_enabled defaults to False (docs/tests agree); it was silently True for a while.
+- Plan-derived core state: pending goal mutation → 'executing' (was unreachable).
+
 # Network status truthfulness
 - NetworkConnectivity has UNKNOWN (initial, "no live probe yet"); OFFLINE only ever results from a real failed probe. Adding an enum value requires updating openapi.yaml + `pnpm --filter @workspace/api-spec run codegen` + jarvis-runtime.ts type + system-panel badge map.
 

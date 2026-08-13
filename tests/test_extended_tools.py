@@ -406,7 +406,7 @@ class TestWebResearchTool(unittest.TestCase):
         ctx, tmp = _make_context(web_research_enabled=True)
         with tmp:
             with patch(
-                "jarvis.tools.extended.urllib.request.urlopen",
+                "jarvis.tools.extended._open_no_redirect",
                 side_effect=urllib.error.URLError("network unreachable"),
             ):
                 r = self.tool.run("https://example.com", ctx)

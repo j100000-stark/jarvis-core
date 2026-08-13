@@ -33,7 +33,7 @@ class Settings:
     llm_model: str = "gpt-4o-mini"
     # Web research: safe HTTP fetch capability.
     # Disabled by default; enable with JARVIS_WEB_RESEARCH_ENABLED=true.
-    web_research_enabled: bool = True
+    web_research_enabled: bool = False
     # Network probe timeout for the network_status tool
     network_probe_timeout_seconds: float = 3.0
 
@@ -83,7 +83,7 @@ class Settings:
             llm_provider=os.environ.get("JARVIS_LLM_PROVIDER", "openai"),
             llm_model=os.environ.get("JARVIS_LLM_MODEL", "gpt-4o-mini"),
             web_research_enabled=_boolean(
-                os.environ.get("JARVIS_WEB_RESEARCH_ENABLED"), True
+                os.environ.get("JARVIS_WEB_RESEARCH_ENABLED"), False
             ),
             network_probe_timeout_seconds=_positive_float(
                 os.environ.get("JARVIS_NETWORK_PROBE_TIMEOUT"), 3.0

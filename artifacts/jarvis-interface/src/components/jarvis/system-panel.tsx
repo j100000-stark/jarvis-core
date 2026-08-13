@@ -227,7 +227,8 @@ function ConnectivityBadge({ value }: { value: string }) {
     local_only: 'border-[hsl(var(--primary)/.4)] bg-[hsl(var(--primary)/.07)] text-[hsl(var(--primary))]',
     recovering: 'border-[hsl(var(--muted-foreground)/.4)] bg-[hsl(var(--muted)/.5)] text-[hsl(var(--muted-foreground))]',
   };
-  const cls = colorMap[value] ?? colorMap.offline;
+  // Unrecognized future values render neutral (unknown), never as a failure.
+  const cls = colorMap[value] ?? colorMap.unknown;
   return (
     <span className={`rounded-full border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.13em] ${cls}`}>
       {value.replace('_', ' ')}

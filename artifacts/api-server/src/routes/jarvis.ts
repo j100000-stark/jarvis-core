@@ -10,15 +10,17 @@ import {
   getJarvisSystemReport,
   sendJarvisGoalJson,
 } from "../lib/jarvis-runtime";
+import { redactSecrets } from "../lib/redact";
 
 const router: IRouter = Router();
 
 router.get("/jarvis/status", (req, res): void => {
   const status = getJarvisStatus();
   if (!status.connected) {
-    req.log.warn({ error: status.error }, "JARVIS runtime unavailable");
+    const safeError = redactSecrets(status.error ?? "JARVIS runtime is unavailable.");
+    req.log.warn({ error: safeError }, "JARVIS runtime unavailable");
     res.status(503).json({
-      error: status.error ?? "JARVIS runtime is unavailable.",
+      error: safeError,
       code: "RUNTIME_UNAVAILABLE",
     });
     return;
@@ -34,12 +36,18 @@ router.post("/jarvis/messages", (req, res): void => {
     return;
   }
 
-  const result = sendJarvisGoalJson(parsed.data.goal.trim());
+  const goal = parsed.data.goal.trim();
+  if (!goal) {
+    res.status(400).json({ error: "Goal cannot be empty.", code: "INVALID_GOAL" });
+    return;
+  }
+
+  const result = sendJarvisGoalJson(goal);
   if ("kind" in result) {
     const code =
       result.kind === "brain_unavailable" ? "BRAIN_UNAVAILABLE" : "RUNTIME_UNAVAILABLE";
     req.log.warn({ code }, "JARVIS goal could not be processed");
-    res.status(503).json({ error: result.error, code });
+    res.status(503).json({ error: redactSecrets(result.error), code });
     return;
   }
 
@@ -49,8 +57,9 @@ router.post("/jarvis/messages", (req, res): void => {
 router.get("/jarvis/system", (req, res): void => {
   const report = getJarvisSystemReport();
   if ("error" in report) {
-    req.log.warn({ error: report.error }, "JARVIS system report unavailable");
-    res.status(503).json({ error: report.error, code: "RUNTIME_UNAVAILABLE" });
+    const safeError = redactSecrets(report.error);
+    req.log.warn({ error: safeError }, "JARVIS system report unavailable");
+    res.status(503).json({ error: safeError, code: "RUNTIME_UNAVAILABLE" });
     return;
   }
   res.json(GetJarvisSystemResponse.parse(report));
