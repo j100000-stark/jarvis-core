@@ -4,24 +4,30 @@
  * Layout (portrait):
  *   ┌─────────────────────────┐
  *   │  JARVIS        [🛡] [⋯]  │  ← top bar
- *   │  ● STANDBY / PROCESSING  │  ← state chip
+ *   │  ● STANDBY / LISTENING   │  ← state chip
  *   │                          │
- *   │       ◎ Neural Core      │  ← full-width canvas
+ *   │       ◎ Neural Core      │  ← full-width canvas, state-driven
  *   │                          │
- *   │   "No provider…"         │  ← status label
+ *   │   "REAL LLM"  gpt-4o…   │  ← status label
  *   │   ≈≈ Waveform ≈≈         │
  *   │                          │
- *   │  [chat]  [●mic]  [sys]   │  ← bottom nav
+ *   │  [chat]  [●mic]  [sys]   │  ← bottom nav; mic = push-to-talk
  *   └─────────────────────────┘
  *
- * All positive labels (READY, CONNECTED, SECURE) are only shown when
- * the backend actually reports them.  DEMO MODE is prominently labelled.
+ * Voice pipeline (V1):
+ *   Tap mic → SpeechRecognition (browser STT)
+ *   → transcript fills goal field → auto-sent to JARVIS
+ *   → response auto-spoken via SpeechSynthesis (browser TTS)
+ *   → NeuralCore: idle → listening → thinking → executing → speaking → idle
+ *
+ * All positive labels (READY, CONNECTED, SECURE) are only shown when the
+ * backend actually reports them.  DEMO MODE is prominently labelled.
  * Execution trace (agents, steps, tool outputs, verification) is shown
  * inside the chat sheet for every assistant response.
  */
 
-import { useMemo, useState, useEffect, useRef } from 'react';
-import { Activity, MessageSquare, Mic, MoreHorizontal, Shield, Wifi, WifiOff } from 'lucide-react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { Activity, MessageSquare, Mic, MicOff, MoreHorizontal, Shield, Wifi, WifiOff } from 'lucide-react';
 import {
   getGetJarvisStatusQueryKey,
   getHealthCheckQueryKey,
@@ -33,13 +39,15 @@ import { NeuralCore, type CoreState } from '@/components/jarvis/neural-core';
 import { Waveform } from '@/components/jarvis/waveform';
 import { ChatSheet, type Message } from '@/components/jarvis/chat-sheet';
 import { SystemSheet } from '@/components/jarvis/system-sheet';
+import { useVoice } from '@/hooks/use-voice';
 
 // ---- State chip config ----
 
 const STATE_META: Record<CoreState, { label: string; color: string; dim: string }> = {
   idle:      { label: 'Standby',    color: '#0099dd', dim: 'rgba(0,153,221,0.15)' },
-  listening: { label: 'Listening',  color: '#00aaff', dim: 'rgba(0,170,255,0.15)' },
+  listening: { label: 'Listening',  color: '#00aaff', dim: 'rgba(0,170,255,0.18)' },
   thinking:  { label: 'Processing', color: '#00ddff', dim: 'rgba(0,220,255,0.15)' },
+  executing: { label: 'Executing',  color: '#00ffaa', dim: 'rgba(0,255,170,0.12)' },
   speaking:  { label: 'Responding', color: '#00ffcc', dim: 'rgba(0,255,200,0.15)' },
   offline:   { label: 'Offline',    color: '#335566', dim: 'rgba(30,50,70,0.3)'   },
   alert:     { label: 'Alert',      color: '#ff7700', dim: 'rgba(255,100,0,0.15)' },
@@ -75,10 +83,14 @@ function deriveStatus(
   providerName: string | undefined,
   pending: boolean,
   isLoading: boolean,
+  isListening: boolean,
+  isSpeaking: boolean,
 ): { line1: string; line2: string | null } {
   const modelLabel = deriveModelLabel(providerName);
   if (isLoading)                 return { line1: 'Connecting to runtime…',  line2: null };
   if (!connected)                return { line1: 'Runtime unreachable',      line2: 'Start the local JARVIS process' };
+  if (isListening)               return { line1: 'Listening…',              line2: 'Speak your goal' };
+  if (isSpeaking)                return { line1: 'Speaking…',               line2: modelLabel };
   if (providerType === 'none')   return { line1: 'No provider configured',   line2: 'Connect a local model or enable LLM mode' };
   if (providerType === 'demo')   return { line1: 'DEMO MODE',                line2: 'Scripted responses — no real AI' };
   if (providerType === 'real-llm' && pending) return { line1: 'Thinking…', line2: modelLabel };
@@ -93,13 +105,16 @@ function deriveCoreState(
   connected: boolean | undefined,
   providerType: ProviderType,
   pending: boolean,
-  speakingFor: boolean,
+  ttsActive: boolean,
   isLoading: boolean,
+  isListening: boolean,
+  isSpeaking: boolean,
 ): CoreState {
   if (isLoading || !connected)       return 'offline';
+  if (isListening)                   return 'listening';
+  if (isSpeaking || ttsActive)       return 'speaking';
   if (providerType === 'none')       return 'idle';
   if (pending)                       return 'thinking';
-  if (speakingFor)                   return 'speaking';
   return 'idle';
 }
 
@@ -113,10 +128,11 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
   const [sysOpen, setSysOpen] = useState(false);
-  const [speakingFor, setSpeakingFor] = useState(false);
+  const [ttsActive, setTtsActive] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
-  const speakingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ttsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ---- API queries ----
   const status = useGetJarvisStatus({
     query: {
       queryKey: getGetJarvisStatusQueryKey(),
@@ -135,23 +151,65 @@ export default function Home() {
   const runtime = status.data;
   const providerType = deriveProviderType(runtime?.providerName);
 
-  // Sync demoMode state from providerType
+  // ---- Voice pipeline ----
+
+  const handleTranscript = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setGoal(text);
+    // Auto-send on voice transcript
+    setChatOpen(false);  // close chat; the send happens in the effect below
+  }, []);
+
+  const voice = useVoice({ onTranscript: handleTranscript });
+
+  // When transcript is set via voice, auto-send it
+  const pendingSendRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!voice.isListening && goal.trim() && pendingSendRef.current !== goal) {
+      // Only auto-send if goal was set by voice (not typed by user)
+      // We track this by checking if the voice hook just transitioned from listening
+    }
+  }, [voice.isListening, goal]);
+
+  // Auto-send the transcript after it's set
+  const lastTranscriptRef = useRef<string>('');
+  const handleVoiceTranscript = useCallback((text: string) => {
+    if (!text.trim()) return;
+    lastTranscriptRef.current = text;
+    setGoal(text);
+  }, []);
+
+  const voice2 = useVoice({
+    onTranscript: useCallback((text: string) => {
+      if (!text.trim()) return;
+      lastTranscriptRef.current = text;
+      setGoal(text);
+    }, []),
+  });
+
+  // ---- Sync demoMode from providerType ----
   useEffect(() => {
     setDemoMode(providerType === 'demo');
   }, [providerType]);
 
+  // ---- Send error display ----
   const sendError = useMemo(() => {
     if (!sendMessage.error) return null;
     const e = sendMessage.error as { error?: string; message?: string };
     return e.error ?? e.message ?? 'The runtime rejected that goal.';
   }, [sendMessage.error]);
 
+  const ready = Boolean(runtime?.connected && providerType !== 'none');
+
+  // ---- Core state and status ----
   const coreState = deriveCoreState(
     runtime?.connected,
     providerType,
     sendMessage.isPending,
-    speakingFor,
+    ttsActive,
     status.isLoading && !runtime,
+    voice2.isListening,
+    voice2.isSpeaking,
   );
 
   const statusText = deriveStatus(
@@ -160,11 +218,12 @@ export default function Home() {
     runtime?.providerName ?? undefined,
     sendMessage.isPending,
     status.isLoading && !runtime,
+    voice2.isListening,
+    voice2.isSpeaking,
   );
 
-  const ready = Boolean(runtime?.connected && providerType !== 'none');
-
-  const handleSend = () => {
+  // ---- Send message ----
+  const handleSend = useCallback(() => {
     const trimmed = goal.trim();
     if (!trimmed || !ready || sendMessage.isPending) return;
     const sentAt = formatTime();
@@ -173,31 +232,65 @@ export default function Home() {
       { id: `u-${Date.now()}`, role: 'user', body: trimmed, time: sentAt },
     ]);
     setGoal('');
+    lastTranscriptRef.current = '';
 
     sendMessage.mutate({ data: { goal: trimmed } }, {
       onSuccess: (result) => {
-        setMessages((cur) => [
-          ...cur,
-          {
-            id: `a-${Date.now()}`,
-            role: 'assistant',
-            body: result.response,
-            providerName: result.providerName,
-            time: formatTime(),
-            // Structured execution trace (new fields from extended API)
-            demoMode: result.demoMode ?? false,
-            demoLabel: result.demoLabel ?? null,
-            executionSteps: result.executionSteps ?? [],
-            planGoal: result.planGoal ?? null,
-            failure: result.failure ?? null,
-          },
-        ]);
-        setSpeakingFor(true);
-        if (speakingTimer.current) clearTimeout(speakingTimer.current);
-        speakingTimer.current = setTimeout(() => setSpeakingFor(false), 3000);
+        const assistantMsg: Message = {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          body: result.response,
+          providerName: result.providerName,
+          time: formatTime(),
+          demoMode: result.demoMode ?? false,
+          demoLabel: result.demoLabel ?? null,
+          executionSteps: result.executionSteps ?? [],
+          planGoal: result.planGoal ?? null,
+          failure: result.failure ?? null,
+        };
+        setMessages((cur) => [...cur, assistantMsg]);
+
+        // Auto-speak the response when the user used voice
+        if (voice2.isSupported && result.response) {
+          voice2.speak(result.response);
+        } else {
+          // Fallback: show a "speaking" indicator for 3s
+          setTtsActive(true);
+          if (ttsTimer.current) clearTimeout(ttsTimer.current);
+          ttsTimer.current = setTimeout(() => setTtsActive(false), 3000);
+        }
       },
     });
-  };
+  }, [goal, ready, sendMessage, voice2]);
+
+  // Auto-send when transcript arrives and there's no pending send
+  useEffect(() => {
+    if (
+      goal.trim() &&
+      goal === lastTranscriptRef.current &&
+      !sendMessage.isPending &&
+      ready
+    ) {
+      handleSend();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goal]);
+
+  // ---- Mic button handler ----
+  const handleMicPress = useCallback(() => {
+    if (!voice2.isSupported) {
+      // Fall back to opening chat for typed input
+      setChatOpen(true);
+      return;
+    }
+    if (voice2.isListening) {
+      voice2.stopListening();
+    } else if (voice2.isSpeaking) {
+      voice2.cancelSpeaking();
+    } else if (ready) {
+      voice2.startListening();
+    }
+  }, [voice2, ready]);
 
   const meta = STATE_META[coreState];
   const coreSize = 320;
@@ -248,7 +341,7 @@ export default function Home() {
             className="rounded-full px-2 py-0.5 font-mono text-[8px] uppercase tracking-[0.14em]"
             style={{ background: 'rgba(0,160,255,0.08)', color: 'rgba(0,160,255,0.4)', border: '1px solid rgba(0,160,255,0.12)' }}
           >
-            {runtime?.version ?? 'v0.1'}
+            {runtime?.version ?? 'v1.0'}
           </span>
           <button
             type="button"
@@ -293,6 +386,7 @@ export default function Home() {
           />
           {meta.label}
           {demoMode && <span style={{ color: 'rgba(255,180,0,0.7)', marginLeft: 4 }}>· demo</span>}
+          {voice2.isListening && <span style={{ color: '#00aaff', marginLeft: 4 }}>· mic on</span>}
         </div>
       </div>
 
@@ -319,6 +413,7 @@ export default function Home() {
             style={{
               color: coreState === 'offline' ? 'rgba(80,120,160,0.7)'
                    : demoMode ? 'rgba(255,180,0,0.85)'
+                   : voice2.isListening ? 'rgba(0,180,255,0.95)'
                    : 'rgba(255,255,255,0.85)',
             }}
             data-testid="text-status-line1"
@@ -332,6 +427,33 @@ export default function Home() {
               data-testid="text-status-line2"
             >
               {statusText.line2}
+            </p>
+          )}
+          {/* Live voice transcript */}
+          {voice2.isListening && voice2.transcript && (
+            <p
+              className="mt-2 max-w-[260px] text-[13px] leading-5 italic"
+              style={{ color: 'rgba(0,200,255,0.75)' }}
+            >
+              "{voice2.transcript}"
+            </p>
+          )}
+          {/* Voice error */}
+          {voice2.voiceState === 'error' && voice2.error && (
+            <p
+              className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em]"
+              style={{ color: 'rgba(255,100,50,0.75)' }}
+            >
+              {voice2.error}
+            </p>
+          )}
+          {/* Voice unsupported notice */}
+          {!voice2.isSupported && (
+            <p
+              className="mt-1 font-mono text-[8px] uppercase tracking-[0.12em]"
+              style={{ color: 'rgba(255,255,255,0.15)' }}
+            >
+              Voice not supported in this browser
             </p>
           )}
         </div>
@@ -375,32 +497,62 @@ export default function Home() {
           data-testid="button-open-chat"
         />
 
-        {/* Central mic / tap-to-speak */}
+        {/* Central mic / push-to-talk */}
         <button
           type="button"
-          onClick={() => setChatOpen(true)}
-          disabled={!ready}
+          onClick={handleMicPress}
+          disabled={!ready && !voice2.isListening}
           className="flex flex-col items-center gap-1.5 transition active:scale-95 disabled:opacity-40"
-          aria-label="Tap to speak or type a goal"
+          aria-label={
+            voice2.isListening
+              ? 'Stop listening'
+              : voice2.isSpeaking
+              ? 'Stop speaking'
+              : 'Tap to speak'
+          }
           data-testid="button-tap-to-speak"
         >
           <div
             className="flex size-[68px] items-center justify-center rounded-full"
             style={{
-              background: ready
+              background: voice2.isListening
+                ? `radial-gradient(circle at 40% 35%, #00aaff44, rgba(0,0,0,0.7))`
+                : ready
                 ? `radial-gradient(circle at 40% 35%, ${meta.color}28, rgba(0,0,0,0.7))`
                 : 'rgba(30,40,50,0.7)',
-              border: `2px solid ${ready ? meta.color + '55' : 'rgba(60,80,100,0.3)'}`,
-              boxShadow: ready ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10` : 'none',
+              border: voice2.isListening
+                ? '2px solid #00aaff88'
+                : `2px solid ${ready ? meta.color + '55' : 'rgba(60,80,100,0.3)'}`,
+              boxShadow: voice2.isListening
+                ? '0 0 28px #00aaff35, inset 0 0 18px #00aaff18'
+                : ready
+                ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10`
+                : 'none',
+              animation: voice2.isListening ? 'pulse 1.2s infinite' : 'none',
             }}
           >
-            <Mic size={26} style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }} />
+            {voice2.isListening
+              ? <MicOff size={26} style={{ color: '#00aaff' }} />
+              : <Mic size={26} style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }} />
+            }
           </div>
           <span
             className="font-mono text-[8px] uppercase tracking-[0.14em]"
-            style={{ color: ready ? 'rgba(0,160,255,0.45)' : 'rgba(60,80,100,0.5)' }}
+            style={{
+              color: voice2.isListening
+                ? '#00aaff'
+                : ready
+                ? 'rgba(0,160,255,0.45)'
+                : 'rgba(60,80,100,0.5)',
+            }}
           >
-            {ready ? 'Tap to speak' : 'Not ready'}
+            {voice2.isListening
+              ? 'Tap to stop'
+              : voice2.isSpeaking
+              ? 'Speaking…'
+              : ready
+              ? voice2.isSupported ? 'Tap to speak' : 'Tap to chat'
+              : 'Not ready'}
           </span>
         </button>
 

@@ -12,10 +12,10 @@ class Settings:
     """Immutable runtime configuration."""
 
     name: str = "JARVIS"
-    version: str = "v0.1.0"
+    version: str = "v1.0.0"
     data_dir: Path = Path("data")
     memory_file: Path = Path("data/memory.json")
-    max_memory_items: int = 100
+    max_memory_items: int = 500
     sandbox_timeout_seconds: float = 5.0
     autonomous_max_retries: int = 3
     local_provider_enabled: bool = False
@@ -31,6 +31,11 @@ class Settings:
     llm_enabled: bool = False
     llm_provider: str = "openai"   # "openai" | "anthropic" | "groq" | "openrouter" | base-URL
     llm_model: str = "gpt-4o-mini"
+    # Web research: safe HTTP fetch capability.
+    # Disabled by default; enable with JARVIS_WEB_RESEARCH_ENABLED=true.
+    web_research_enabled: bool = False
+    # Network probe timeout for the network_status tool
+    network_probe_timeout_seconds: float = 3.0
 
     @classmethod
     def from_environment(cls, memory_file: str | None = None) -> "Settings":
@@ -42,10 +47,10 @@ class Settings:
 
         return cls(
             name=os.environ.get("JARVIS_NAME", "JARVIS"),
-            version=os.environ.get("JARVIS_VERSION", "v0.1.0"),
+            version=os.environ.get("JARVIS_VERSION", "v1.0.0"),
             data_dir=data_dir,
             memory_file=mem_path,
-            max_memory_items=_positive_int(os.environ.get("JARVIS_MAX_MEMORY"), 100),
+            max_memory_items=_positive_int(os.environ.get("JARVIS_MAX_MEMORY"), 500),
             sandbox_timeout_seconds=_positive_float(
                 os.environ.get("JARVIS_SANDBOX_TIMEOUT"), 5.0
             ),
@@ -68,6 +73,12 @@ class Settings:
             llm_enabled=_boolean(os.environ.get("JARVIS_LLM_ENABLED"), False),
             llm_provider=os.environ.get("JARVIS_LLM_PROVIDER", "openai"),
             llm_model=os.environ.get("JARVIS_LLM_MODEL", "gpt-4o-mini"),
+            web_research_enabled=_boolean(
+                os.environ.get("JARVIS_WEB_RESEARCH_ENABLED"), False
+            ),
+            network_probe_timeout_seconds=_positive_float(
+                os.environ.get("JARVIS_NETWORK_PROBE_TIMEOUT"), 3.0
+            ),
         )
 
 

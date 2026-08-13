@@ -296,7 +296,7 @@ class Assistant:
                 f"Brain provider: {pname}",
                 f"Provider type: {provider_type}",
                 f"Disk healthy: {self.monitor.healthy()}",
-                "External APIs: disabled",
+                f"External APIs: {'enabled' if self.settings.web_research_enabled else 'disabled'}",
                 f"Demo mode: {'yes' if self.settings.demo_mode else 'no'}",
                 f"LLM mode: {'yes' if self.settings.llm_enabled else 'no'}",
             ]

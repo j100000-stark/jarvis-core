@@ -18,6 +18,7 @@ export type CoreState =
   | 'idle'
   | 'listening'
   | 'thinking'
+  | 'executing'
   | 'speaking'
   | 'offline'
   | 'alert';
@@ -63,6 +64,16 @@ const STATE_CONFIG: Record<CoreState, StateConfig> = {
     nodeAlpha:    1.0,
     edgeAlpha:    0.55,
     particleAlpha:0.80,
+  },
+  executing: {
+    primary:      '#00ffaa',
+    secondary:    '#00cc88',
+    glow:         46,
+    rotationSpeed:0.0072,
+    pulseSpeed:   0.080,
+    nodeAlpha:    1.0,
+    edgeAlpha:    0.58,
+    particleAlpha:0.82,
   },
   speaking: {
     primary:      '#00ffcc',

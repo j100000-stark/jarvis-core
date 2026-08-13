@@ -1,0 +1,414 @@
+UPGRADE JARVIS NOW — BUILD THE REAL V1 ON THE CURRENT REPLIT PROJECT.
+
+Do NOT wait for Raspberry Pi or my physical PC.
+We are building the complete V1 now using the existing Replit project and making it usable from iPhone through the existing web interface.
+
+IMPORTANT ARCHITECTURE RULE:
+Do NOT rewrite the existing architecture.
+Preserve:
+- Brain / AIProvider contracts
+- LocalAIProvider
+- DemoBrain / DemoProvider
+- Planner
+- AgentExecutor
+- AgentOrchestrator
+- MemoryManager
+- CodeAgent
+- Sandbox
+- RollbackManager
+- SelfImprovementManager
+- SystemMonitor
+- NetworkRecoveryManager
+- Security agents
+- Resilience layer
+- capability request/safety gates
+- cinematic neural-core UI
+
+The goal is to make JARVIS genuinely useful now, while keeping the architecture portable to a local PC/Raspberry later.
+
+==================================================
+1. REAL LLM BRAIN
+==================================================
+
+Implement a real LLM provider behind the existing Brain/AIProvider interface.
+
+Use a provider adapter architecture so the exact provider can be replaced later by a local Ollama/llama.cpp model without changing JARVIS Core.
+
+Requirements:
+- No fake intelligence.
+- No keyword-only conversational routing.
+- The LLM must understand normal natural-language conversation.
+- Credentials/API keys must ONLY come from environment secrets.
+- Never hardcode secrets.
+- If the real provider is not configured, report that honestly.
+- DemoBrain must remain separate.
+- LocalAIProvider must remain intact.
+
+The system must distinguish:
+
+DEMO
+REAL LLM
+LOCAL LLM
+NO PROVIDER
+
+Expose provider/model information through the existing system API.
+
+==================================================
+2. GENERAL PURPOSE AGENT BRAIN
+==================================================
+
+Turn JARVIS into a general-purpose goal-oriented agent.
+
+The user should be able to say things naturally, for example:
+
+"Hey JARVIS, what can you do?"
+
+"Remember that my name is San."
+
+"What did I ask you earlier?"
+
+"Check the system."
+
+"Check my network."
+
+"Research this business idea."
+
+"Compare these products."
+
+"Find information about this company."
+
+"Analyze this document."
+
+"Create a plan for my business."
+
+"Explain this to me."
+
+Do NOT create hardcoded handlers for these exact sentences.
+
+Instead:
+
+USER MESSAGE
+→ LLM understanding
+→ determine intent/goal
+→ determine required capabilities/tools
+→ create structured plan
+→ execute through existing safety boundaries
+→ verify
+→ answer naturally
+
+==================================================
+3. CAPABILITY / TOOL REGISTRY
+==================================================
+
+Create a proper CapabilityRegistry / ToolRegistry.
+
+Every capability must have:
+
+- name
+- description
+- input schema
+- required permission
+- risk level
+- execution function
+- verification function
+
+Initial safe capabilities should include:
+
+- conversation
+- memory read/write
+- system status
+- network status
+- calculations
+- local file operations within an explicit workspace
+- document/text analysis
+- web research interface
+- security status
+- planning
+- reporting
+
+The LLM must discover/select tools through this registry rather than receiving unrestricted system access.
+
+If a capability is unavailable, JARVIS must say so clearly.
+
+Example:
+
+"I don't currently have access to that capability."
+
+Do NOT fabricate results.
+
+==================================================
+4. WEB RESEARCH CAPABILITY
+==================================================
+
+Add a safe web research abstraction.
+
+JARVIS should be architecturally capable of receiving a goal such as:
+
+"Research this business."
+
+"Compare these competitors."
+
+"Find current information about this product."
+
+"Look up current prices."
+
+The web capability must:
+
+- retrieve information from permitted web sources
+- return source URLs/titles where available
+- distinguish retrieved facts from JARVIS reasoning
+- never claim it visited a site if it did not
+- handle connection failures honestly
+- avoid unrestricted arbitrary browsing automation
+
+Do NOT bypass authentication, paywalls, CAPTCHAs, access controls, or website security.
+
+Make the interface replaceable so the current web implementation can later be upgraded.
+
+==================================================
+5. MEMORY
+==================================================
+
+Upgrade MemoryManager into conversational memory.
+
+Support:
+
+SHORT TERM:
+current conversation context.
+
+LONG TERM:
+facts explicitly requested to be remembered.
+
+EPISODIC:
+important events/tasks/results.
+
+SYSTEM:
+JARVIS configuration.
+
+Examples:
+
+User:
+"Remember that my name is San."
+
+JARVIS stores the explicit memory.
+
+Later:
+
+User:
+"What is my name?"
+
+JARVIS retrieves it.
+
+Never invent memories.
+
+Add tests for storing, retrieving, updating and forgetting explicit memories.
+
+==================================================
+6. VOICE
+==================================================
+
+Implement the actual browser voice pipeline for iPhone.
+
+Pipeline:
+
+MICROPHONE
+→ SPEECH-TO-TEXT
+→ JARVIS BRAIN
+→ RESPONSE
+→ TEXT-TO-SPEECH
+→ AUDIO
+
+Use browser-supported APIs where possible for the first V1 implementation.
+
+Requirements:
+- microphone permission handling
+- push-to-talk
+- clear listening state
+- speech recognition result
+- send transcript to existing JARVIS message pipeline
+- speak the assistant response
+- stop/cancel speaking
+- graceful unsupported-browser error
+- no fake audio
+
+Keep the implementation provider-agnostic so a better STT/TTS provider can be added later.
+
+==================================================
+7. NEURAL CORE STATES
+==================================================
+
+Connect the existing blue neural core to real runtime state:
+
+IDLE
+LISTENING
+THINKING
+EXECUTING
+SPEAKING
+ALERT
+OFFLINE
+
+The animation must react to actual state transitions.
+
+Do not use random state changes unrelated to the runtime.
+
+==================================================
+8. MOBILE-FIRST EXPERIENCE
+==================================================
+
+Keep the cinematic interface.
+
+The primary iPhone experience should be:
+
+open JARVIS
+→ tap microphone
+→ speak
+→ core shows LISTENING
+→ transcript appears
+→ core shows THINKING
+→ tools/agents execute
+→ core shows SPEAKING
+→ JARVIS answers aloud
+
+Chat remains available as a secondary input.
+
+Keep the System and Agents panels accessible but minimal.
+
+==================================================
+9. EXECUTION TRANSPARENCY
+==================================================
+
+When JARVIS uses tools, allow the user to inspect:
+
+Goal
+Plan
+Selected capability
+Agent
+Tool
+Result
+Verification
+Final response
+
+Do not expose secrets, tokens or private credentials.
+
+==================================================
+10. SAFETY
+==================================================
+
+Maintain all existing safety boundaries.
+
+JARVIS must NOT:
+- obtain unauthorized access
+- attack third-party systems
+- steal credentials
+- bypass access controls
+- execute unrestricted arbitrary commands
+- silently grant itself permissions
+- silently install unknown software
+- fabricate actions/results
+
+Any privileged or destructive action must go through explicit capability permission and approval.
+
+==================================================
+11. SELF-IMPROVEMENT
+==================================================
+
+Keep the existing CodeAgent architecture.
+
+Allow JARVIS to propose improvements to its own code, but require:
+
+proposal
+→ checkpoint
+→ sandbox
+→ tests
+→ verification
+→ explicit approval
+→ deployment
+
+Never silently grant new privileges.
+
+==================================================
+12. PC/RASPBERRY PORTABILITY
+==================================================
+
+Make the V1 portable.
+
+Do NOT hardcode Replit-specific paths or assumptions into the core.
+
+Create clear configuration boundaries for:
+
+LLM provider
+STT provider
+TTS provider
+web research provider
+storage
+network
+hardware
+
+Document how the same project can later run on:
+
+Replit
+Windows/Linux PC
+Raspberry Pi
+
+The future local LLM should be able to replace the temporary remote provider without changing the JARVIS agent architecture.
+
+==================================================
+13. TESTING
+==================================================
+
+Add comprehensive tests using mocks for:
+
+- real LLM provider adapter
+- conversation
+- tool selection
+- capability registry
+- memory
+- web research abstraction
+- voice state machine
+- permission gates
+- execution pipeline
+- provider failure
+- network failure
+- malformed LLM output
+- tool failure
+- recovery
+- demo mode
+- local provider compatibility
+
+Run:
+
+python -m unittest discover -s tests -v
+
+Run TypeScript typecheck/build.
+
+Do not finish until all tests pass.
+
+==================================================
+14. FINAL REPORT
+==================================================
+
+At the end report:
+
+- files created
+- files modified
+- real LLM provider implemented
+- model/provider configuration
+- voice implementation
+- capabilities/tools added
+- memory implementation
+- web research implementation
+- safety boundaries
+- tests
+- TypeScript result
+- how to start JARVIS from iPhone
+- how to enable REAL LLM mode
+- how to enable DEMO mode
+- what remains for the PC
+- what remains for Raspberry Pi
+
+IMPORTANT:
+Do NOT redesign the UI again.
+Do NOT remove the cinematic neural core.
+Do NOT replace working components unnecessarily.
+
+BUILD IT NOW.

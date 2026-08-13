@@ -1,0 +1,5 @@
+- [JARVIS V1 architecture](jarvis-v1-arch.md) — key decisions across brain selection, tool registry, memory tiers, voice, and test patterns.
+- [Tool registry expansion](tool-registry-v1.md) — 11 tools in V1; web_research gated by JARVIS_WEB_RESEARCH_ENABLED; CalculateTool uses AST not eval.
+- [Memory tiers](memory-tiers.md) — MemoryRecord has `tier` field (default "long_term"); backward-compatible with old JSON; tiers: long_term/episodic/system.
+- [Voice hook](voice-hook.md) — useVoice uses self-declared Web Speech API types (not lib.dom); isSupportedBrowser guards all calls; speak() auto-cancels recognition first.
+- [CoreState](core-state.md) — NeuralCore + Waveform + STATE_META all require `executing` entry; adding a new CoreState requires updating all three.
