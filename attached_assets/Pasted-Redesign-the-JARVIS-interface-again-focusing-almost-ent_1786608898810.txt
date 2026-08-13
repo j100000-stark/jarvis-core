@@ -1,0 +1,200 @@
+Redesign the JARVIS interface again, focusing almost entirely on making the neural core feel ALIVE, organic and cinematic.
+
+Do not rebuild the backend or change the LLM/provider architecture. This is a FRONTEND/UX animation redesign only.
+
+The current neural-core implementation is too static and artificial. I want the central neural core to feel like a living computational brain.
+
+CORE BEHAVIOR:
+
+1. IDLE / STARTUP
+When the page opens, the neural core must already be alive.
+It should continuously and subtly breathe/pulse even when JARVIS is doing nothing.
+
+The pulse must NOT be a simple repetitive scale animation.
+Use layered motion with slightly different timing, amplitude and phase so it feels organic.
+
+2. NEURONS
+Use many small particles/nodes distributed in a spherical 3D-looking volume.
+
+Each neuron should have:
+- slightly different brightness
+- slightly different size
+- subtle independent movement
+- depth
+- occasional micro-flicker
+- occasional activation
+
+Do not make every particle move identically.
+
+3. CONNECTIONS
+Connections between neurons should:
+- appear/disappear organically
+- have varying opacity
+- occasionally carry a traveling energy pulse
+- not all animate at the same time
+
+The network should constantly evolve slightly even when idle.
+
+4. RANDOM NEURAL ACTIVITY
+While idle, randomly activate small groups of neurons.
+
+A pulse should sometimes travel:
+neuron → connection → neuron → connection → neuron
+
+This must happen randomly and naturally.
+
+Avoid predictable loops.
+
+5. SPEAKING
+When JARVIS is speaking through browser SpeechSynthesis:
+- increase neural activity
+- increase glow
+- make energy pulses propagate through the network
+- make the core react to the voice amplitude if technically available
+- create a subtle rhythmic response synchronized with speech
+
+The core should visually feel like JARVIS is THINKING/SPEAKING, not simply playing an animation.
+
+6. LISTENING
+When microphone recognition is active:
+- core becomes more responsive
+- outer particles move toward the core
+- subtle waves/ripples should react to microphone input if available
+- use a cool cyan/blue intensity
+
+7. THINKING
+While an LLM request is being processed:
+- increase rotation very subtly
+- increase neural firing frequency
+- increase connection activity
+- create brighter energy traveling through the network
+- core should feel computationally active
+
+8. ALERT
+For security/error alerts:
+- temporarily change the energy behavior
+- use a restrained amber/red warning pulse
+- do NOT turn the entire screen red
+
+9. VISUAL STYLE
+
+Make the entire interface:
+- near-black
+- deep navy
+- electric blue/cyan
+- subtle glass effects
+- cinematic
+- minimal
+- premium
+- futuristic
+- extremely smooth
+
+The neural core is the HERO element.
+
+Remove unnecessary visual clutter around it.
+
+10. PHYSICS / ORGANIC MOTION
+
+Do NOT use simple:
+setInterval()
+or repetitive CSS keyframes for the core.
+
+Use requestAnimationFrame and time-based animation.
+
+Use deterministic noise / smooth random motion / spring-like interpolation where appropriate.
+
+Every particle should have its own:
+- phase
+- speed
+- orbit radius
+- depth
+- brightness
+- activation probability
+
+The result should feel chaotic but controlled.
+
+11. PERFORMANCE
+
+This must run smoothly on an iPhone Safari browser.
+
+Use Canvas 2D or WebGL depending on what is already implemented.
+
+Do not introduce Three.js unless absolutely necessary.
+
+Target 60fps where possible.
+
+Use devicePixelRatio carefully so high-resolution iPhones do not cause excessive rendering cost.
+
+Pause/reduce animation when the page is backgrounded using visibilitychange.
+
+12. UI
+
+The central neural core should occupy most of the visual attention.
+
+Keep only minimal status information:
+JARVIS
+connection/provider state
+small state indicator
+
+The bottom controls should be:
+CHAT
+large central MICROPHONE
+SYSTEM
+
+The microphone button should visually integrate with the neural core.
+
+When speaking/listening, the microphone should glow subtly.
+
+13. IMPORTANT
+
+Do not fabricate runtime state.
+
+All states must continue to come from the actual backend:
+OFFLINE
+IDLE
+LISTENING
+THINKING
+EXECUTING
+SPEAKING
+ALERT
+
+The animation must react to the real state.
+
+14. STARTUP SEQUENCE
+
+Create a cinematic startup sequence when JARVIS first loads:
+
+0–0.5 sec:
+almost black
+
+0.5–1.5 sec:
+a tiny blue point appears in the center
+
+1.5–2.5 sec:
+neurons begin forming around it
+
+2.5–3.5 sec:
+connections progressively appear
+
+3.5+ sec:
+the complete neural network stabilizes into its idle breathing state
+
+Do not make this overly dramatic or slow.
+
+15. FINAL RESULT
+
+The user should open the website and immediately think:
+
+"This thing is alive."
+
+It should look like a real computational neural system rather than a rotating 3D sphere.
+
+Keep the existing backend, API routes, LLM integration, voice integration, tools, memory and safety architecture untouched.
+
+Only improve the frontend experience and neural-core rendering.
+
+After implementation:
+- run TypeScript checks
+- run existing tests
+- verify the interface on an iPhone-sized viewport
+- ensure no regressions in voice, chat, LLM status or system panel

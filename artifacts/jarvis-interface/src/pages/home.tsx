@@ -153,33 +153,10 @@ export default function Home() {
 
   // ---- Voice pipeline ----
 
-  const handleTranscript = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setGoal(text);
-    // Auto-send on voice transcript
-    setChatOpen(false);  // close chat; the send happens in the effect below
-  }, []);
-
-  const voice = useVoice({ onTranscript: handleTranscript });
-
-  // When transcript is set via voice, auto-send it
-  const pendingSendRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!voice.isListening && goal.trim() && pendingSendRef.current !== goal) {
-      // Only auto-send if goal was set by voice (not typed by user)
-      // We track this by checking if the voice hook just transitioned from listening
-    }
-  }, [voice.isListening, goal]);
-
   // Auto-send the transcript after it's set
   const lastTranscriptRef = useRef<string>('');
-  const handleVoiceTranscript = useCallback((text: string) => {
-    if (!text.trim()) return;
-    lastTranscriptRef.current = text;
-    setGoal(text);
-  }, []);
 
-  const voice2 = useVoice({
+  const voice = useVoice({
     onTranscript: useCallback((text: string) => {
       if (!text.trim()) return;
       lastTranscriptRef.current = text;
@@ -208,8 +185,8 @@ export default function Home() {
     sendMessage.isPending,
     ttsActive,
     status.isLoading && !runtime,
-    voice2.isListening,
-    voice2.isSpeaking,
+    voice.isListening,
+    voice.isSpeaking,
   );
 
   const statusText = deriveStatus(
@@ -218,8 +195,8 @@ export default function Home() {
     runtime?.providerName ?? undefined,
     sendMessage.isPending,
     status.isLoading && !runtime,
-    voice2.isListening,
-    voice2.isSpeaking,
+    voice.isListening,
+    voice.isSpeaking,
   );
 
   // ---- Send message ----
@@ -251,8 +228,8 @@ export default function Home() {
         setMessages((cur) => [...cur, assistantMsg]);
 
         // Auto-speak the response when the user used voice
-        if (voice2.isSupported && result.response) {
-          voice2.speak(result.response);
+        if (voice.isSupported && result.response) {
+          voice.speak(result.response);
         } else {
           // Fallback: show a "speaking" indicator for 3s
           setTtsActive(true);
@@ -261,7 +238,7 @@ export default function Home() {
         }
       },
     });
-  }, [goal, ready, sendMessage, voice2]);
+  }, [goal, ready, sendMessage, voice]);
 
   // Auto-send when transcript arrives and there's no pending send
   useEffect(() => {
@@ -278,19 +255,19 @@ export default function Home() {
 
   // ---- Mic button handler ----
   const handleMicPress = useCallback(() => {
-    if (!voice2.isSupported) {
+    if (!voice.isSupported) {
       // Fall back to opening chat for typed input
       setChatOpen(true);
       return;
     }
-    if (voice2.isListening) {
-      voice2.stopListening();
-    } else if (voice2.isSpeaking) {
-      voice2.cancelSpeaking();
+    if (voice.isListening) {
+      voice.stopListening();
+    } else if (voice.isSpeaking) {
+      voice.cancelSpeaking();
     } else if (ready) {
-      voice2.startListening();
+      voice.startListening();
     }
-  }, [voice2, ready]);
+  }, [voice, ready]);
 
   const meta = STATE_META[coreState];
   const coreSize = 320;
@@ -386,7 +363,7 @@ export default function Home() {
           />
           {meta.label}
           {demoMode && <span style={{ color: 'rgba(255,180,0,0.7)', marginLeft: 4 }}>· demo</span>}
-          {voice2.isListening && <span style={{ color: '#00aaff', marginLeft: 4 }}>· mic on</span>}
+          {voice.isListening && <span style={{ color: '#00aaff', marginLeft: 4 }}>· mic on</span>}
         </div>
       </div>
 
@@ -413,7 +390,7 @@ export default function Home() {
             style={{
               color: coreState === 'offline' ? 'rgba(80,120,160,0.7)'
                    : demoMode ? 'rgba(255,180,0,0.85)'
-                   : voice2.isListening ? 'rgba(0,180,255,0.95)'
+                   : voice.isListening ? 'rgba(0,180,255,0.95)'
                    : 'rgba(255,255,255,0.85)',
             }}
             data-testid="text-status-line1"
@@ -430,25 +407,25 @@ export default function Home() {
             </p>
           )}
           {/* Live voice transcript */}
-          {voice2.isListening && voice2.transcript && (
+          {voice.isListening && voice.transcript && (
             <p
               className="mt-2 max-w-[260px] text-[13px] leading-5 italic"
               style={{ color: 'rgba(0,200,255,0.75)' }}
             >
-              "{voice2.transcript}"
+              "{voice.transcript}"
             </p>
           )}
           {/* Voice error */}
-          {voice2.voiceState === 'error' && voice2.error && (
+          {voice.voiceState === 'error' && voice.error && (
             <p
               className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em]"
               style={{ color: 'rgba(255,100,50,0.75)' }}
             >
-              {voice2.error}
+              {voice.error}
             </p>
           )}
           {/* Voice unsupported notice */}
-          {!voice2.isSupported && (
+          {!voice.isSupported && (
             <p
               className="mt-1 font-mono text-[8px] uppercase tracking-[0.12em]"
               style={{ color: 'rgba(255,255,255,0.15)' }}
@@ -501,12 +478,12 @@ export default function Home() {
         <button
           type="button"
           onClick={handleMicPress}
-          disabled={!ready && !voice2.isListening}
+          disabled={!ready && !voice.isListening}
           className="flex flex-col items-center gap-1.5 transition active:scale-95 disabled:opacity-40"
           aria-label={
-            voice2.isListening
+            voice.isListening
               ? 'Stop listening'
-              : voice2.isSpeaking
+              : voice.isSpeaking
               ? 'Stop speaking'
               : 'Tap to speak'
           }
@@ -515,23 +492,23 @@ export default function Home() {
           <div
             className="flex size-[68px] items-center justify-center rounded-full"
             style={{
-              background: voice2.isListening
+              background: voice.isListening
                 ? `radial-gradient(circle at 40% 35%, #00aaff44, rgba(0,0,0,0.7))`
                 : ready
                 ? `radial-gradient(circle at 40% 35%, ${meta.color}28, rgba(0,0,0,0.7))`
                 : 'rgba(30,40,50,0.7)',
-              border: voice2.isListening
+              border: voice.isListening
                 ? '2px solid #00aaff88'
                 : `2px solid ${ready ? meta.color + '55' : 'rgba(60,80,100,0.3)'}`,
-              boxShadow: voice2.isListening
+              boxShadow: voice.isListening
                 ? '0 0 28px #00aaff35, inset 0 0 18px #00aaff18'
                 : ready
                 ? `0 0 28px ${meta.color}25, inset 0 0 18px ${meta.color}10`
                 : 'none',
-              animation: voice2.isListening ? 'pulse 1.2s infinite' : 'none',
+              animation: voice.isListening ? 'pulse 1.2s infinite' : 'none',
             }}
           >
-            {voice2.isListening
+            {voice.isListening
               ? <MicOff size={26} style={{ color: '#00aaff' }} />
               : <Mic size={26} style={{ color: ready ? meta.color : 'rgba(60,80,100,0.7)' }} />
             }
@@ -539,19 +516,19 @@ export default function Home() {
           <span
             className="font-mono text-[8px] uppercase tracking-[0.14em]"
             style={{
-              color: voice2.isListening
+              color: voice.isListening
                 ? '#00aaff'
                 : ready
                 ? 'rgba(0,160,255,0.45)'
                 : 'rgba(60,80,100,0.5)',
             }}
           >
-            {voice2.isListening
+            {voice.isListening
               ? 'Tap to stop'
-              : voice2.isSpeaking
+              : voice.isSpeaking
               ? 'Speaking…'
               : ready
-              ? voice2.isSupported ? 'Tap to speak' : 'Tap to chat'
+              ? voice.isSupported ? 'Tap to speak' : 'Tap to chat'
               : 'Not ready'}
           </span>
         </button>

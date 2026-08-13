@@ -22,4 +22,7 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.shared]
-JARVIS_DEMO_MODE = "true"
+JARVIS_DEMO_MODE = "false"
+JARVIS_LLM_ENABLED = "true"
+JARVIS_LLM_PROVIDER = "groq"
+JARVIS_LLM_MODEL = "openai/gpt-oss-120b"
