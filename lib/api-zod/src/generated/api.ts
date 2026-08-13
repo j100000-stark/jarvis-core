@@ -61,7 +61,18 @@ export const SendJarvisMessageResponse = zod.object({
   "verified": zod.boolean(),
   "verification": zod.string()
 })),
-  "failure": zod.string().nullable()
+  "failure": zod.string().nullable(),
+  "error": zod.object({
+    "code": zod.string(),
+    "type": zod.string(),
+    "message": zod.string(),
+    "component": zod.string(),
+    "step": zod.string().nullable(),
+    "recoverable": zod.boolean(),
+    "incidentId": zod.number(),
+    "operation": zod.string(),
+    "timestamp": zod.string()
+  }).optional().nullable()
 })
 
 

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { JarvisExecutionStep } from './jarvisExecutionStep';
+import type { JarvisExecutionDiagnostic } from './jarvisExecutionDiagnostic';
 
 export interface JarvisMessageResponse {
   success: boolean;
@@ -22,4 +23,6 @@ export interface JarvisMessageResponse {
   executionSteps: JarvisExecutionStep[];
   /** @nullable */
   failure: string | null;
+  /** Structured diagnostic detail present when success=false and an exception was caught. @nullable */
+  error?: JarvisExecutionDiagnostic | null;
 }

@@ -12,6 +12,7 @@
  */
 import { ArrowUp, CheckCircle, ChevronDown, ChevronRight, Mic, Terminal, X, XCircle } from 'lucide-react';
 import { type FormEvent, type KeyboardEvent, useRef, useState } from 'react';
+import type { ExecutionDiagnostic } from './error-detail-card';
 
 // ---- Types (mirrors JarvisGoalResult from jarvis-runtime.ts) ----
 
@@ -36,6 +37,8 @@ export interface Message {
   executionSteps?: ExecutionStep[];
   planGoal?: string | null;
   failure?: string | null;
+  /** Structured execution diagnostic present when an exception caused the failure. */
+  error?: ExecutionDiagnostic | null;
 }
 
 interface ChatSheetProps {

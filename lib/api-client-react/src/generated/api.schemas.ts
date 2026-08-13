@@ -38,6 +38,19 @@ export interface JarvisExecutionStep {
   verification: string;
 }
 
+export interface JarvisExecutionDiagnostic {
+  code: string;
+  type: string;
+  message: string;
+  component: string;
+  /** @nullable */
+  step: string | null;
+  recoverable: boolean;
+  incidentId: number;
+  operation: string;
+  timestamp: string;
+}
+
 export interface JarvisMessageResponse {
   success: boolean;
   goal: string;
@@ -53,6 +66,8 @@ export interface JarvisMessageResponse {
   executionSteps: JarvisExecutionStep[];
   /** @nullable */
   failure: string | null;
+  /** Structured diagnostic detail when an exception caused the failure. @nullable */
+  error?: JarvisExecutionDiagnostic | null;
 }
 
 export interface JarvisError {

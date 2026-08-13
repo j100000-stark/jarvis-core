@@ -223,12 +223,30 @@ class Assistant:
             }
         except Exception as error:
             incident = self.recovery.record(error, operation="execute_goal_structured")
+
+            # Find the innermost executor step that failed, if any.
+            # The executor records "step:<id>" incidents before the outer catch
+            # fires, so the second-to-last incident (if it exists) may carry it.
+            failing_step: str | None = None
+            all_incidents = list(self.recovery._incidents)  # noqa: SLF001
+            for past in reversed(all_incidents[:-1]):  # skip the one we just recorded
+                if past.operation.startswith("step:") or past.operation.startswith("retry:"):
+                    failing_step = past.operation.split(":", 1)[-1]
+                    break
+
+            from ..diagnostics import build_execution_error
+            exec_error = build_execution_error(
+                incident,
+                goal=goal,
+                failing_step=failing_step,
+            )
+
             return {
                 "success": False,
                 "goal": goal,
                 "response": (
-                    f"Goal execution failed ({incident.identifier}). "
-                    "The incident was recorded locally."
+                    f"Goal execution failed: {exec_error['type']} in {exec_error['component']}."
+                    f" Incident #{incident.identifier} recorded."
                 ),
                 "providerName": getattr(self.brain, "provider_name", "unknown"),
                 "demoMode": self.settings.demo_mode,
@@ -236,7 +254,8 @@ class Assistant:
                 "planGoal": None,
                 "planProvider": None,
                 "executionSteps": [],
-                "failure": str(error),
+                "failure": exec_error["message"],
+                "error": exec_error,
             }
 
     def run_goal(self, goal: str) -> ExecutionReport:

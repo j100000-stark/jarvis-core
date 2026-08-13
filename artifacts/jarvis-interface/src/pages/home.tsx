@@ -48,6 +48,7 @@ import { ChatSheet, type Message } from '@/components/jarvis/chat-sheet';
 import { SystemSheet } from '@/components/jarvis/system-sheet';
 import { LiveTerminal, mkLine, type TerminalLine, type TerminalSeverity } from '@/components/jarvis/live-terminal';
 import { AlertCard, mkAlert, type AlertEntry } from '@/components/jarvis/alert-card';
+import { ErrorDetailCard, type ExecutionDiagnostic } from '@/components/jarvis/error-detail-card';
 import { ResponseCard } from '@/components/jarvis/response-card';
 import { useVoice } from '@/hooks/use-voice';
 
@@ -132,6 +133,11 @@ export default function Home() {
     },
     [],
   );
+
+  // ── Execution error diagnostic ────────────────────────────────────────────
+  const [lastError, setLastError] = useState<ExecutionDiagnostic | null>(null);
+
+  const dismissError = useCallback(() => setLastError(null), []);
 
   // ── Alerts ───────────────────────────────────────────────────────────────
   const [alerts, setAlerts] = useState<AlertEntry[]>([]);
@@ -392,6 +398,12 @@ export default function Home() {
 
     sendMessage.mutate({ data: { goal: trimmed } }, {
       onSuccess: (result) => {
+        // Surface the structured execution diagnostic if present.
+        // Cast through an intersection because the dist declaration may lag behind the
+        // updated source — the runtime field is always present when success=false.
+        type ResultWithError = typeof result & { error?: ExecutionDiagnostic | null };
+        const execError = (result as ResultWithError).error ?? null;
+
         const assistantMsg: Message = {
           id: `a-${Date.now()}`,
           role: 'assistant',
@@ -403,6 +415,7 @@ export default function Home() {
           executionSteps: result.executionSteps ?? [],
           planGoal: result.planGoal ?? null,
           failure: result.failure ?? null,
+          error: execError,
         };
         setMessages((cur) => [...cur, assistantMsg]);
 
@@ -416,7 +429,36 @@ export default function Home() {
             pushLine('TOOL', 'EXECUTION', 'info');
             pushLine('RESULT', 'RECEIVED', 'info');
           }
-          pushLine('RESPONSE', 'GENERATED', 'success');
+
+          if (!result.success && execError) {
+            // Structured exception — push diagnostic terminal events
+            pushLine(`❌ ERROR`, execError.type, 'error');
+            pushLine('COMPONENT', execError.component.toUpperCase(), 'error');
+            if (execError.step) pushLine('STEP', execError.step, 'error');
+            pushLine(
+              'RECOVERY',
+              execError.recoverable ? 'ATTEMPTING' : 'NOT POSSIBLE',
+              execError.recoverable ? 'warning' : 'error',
+            );
+            if (execError.recoverable) {
+              // Brief pause then show outcome — executor already retried internally
+              setTimeout(() => pushLine('RECOVERY', 'FAILED', 'error'), 900);
+            }
+            setLastError(execError);
+            pushAlert(
+              `${execError.code}`,
+              execError.message.slice(0, 120),
+              execError.recoverable ? 'warning' : 'error',
+            );
+            triggerAlertPulse();
+          } else if (!result.success && result.failure) {
+            // Clean step-level failure (executor returned failed report, not exception)
+            pushLine('RESULT', 'STEP FAILED', 'warning');
+            pushLine('FAILURE', result.failure.slice(0, 60), 'warning');
+            triggerAlertPulse();
+          } else {
+            pushLine('RESPONSE', 'GENERATED', 'success');
+          }
         }
 
         if (voice.isSupported && result.response) {
@@ -800,6 +842,16 @@ export default function Home() {
           style={{ paddingLeft: 20, paddingRight: 20, paddingBottom: 8 }}
         >
           <AlertCard alerts={alerts} onDismiss={dismissAlert} />
+        </div>
+      )}
+
+      {/* ── Execution error diagnostic card ── */}
+      {lastError && (
+        <div
+          className="relative z-10"
+          style={{ paddingLeft: 20, paddingRight: 20, paddingBottom: 8 }}
+        >
+          <ErrorDetailCard diagnostic={lastError} onDismiss={dismissError} />
         </div>
       )}
 

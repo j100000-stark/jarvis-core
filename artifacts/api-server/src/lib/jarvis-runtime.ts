@@ -25,6 +25,18 @@ export type JarvisExecutionStep = {
   verification: string;
 };
 
+export type ExecutionDiagnostic = {
+  code: string;
+  type: string;
+  message: string;
+  component: string;
+  step: string | null;
+  recoverable: boolean;
+  incidentId: number;
+  operation: string;
+  timestamp: string;
+};
+
 export type JarvisGoalResult = {
   success: boolean;
   goal: string;
@@ -36,6 +48,8 @@ export type JarvisGoalResult = {
   planProvider: string | null;
   executionSteps: JarvisExecutionStep[];
   failure: string | null;
+  /** Structured diagnostic present when an exception caused the failure. */
+  error?: ExecutionDiagnostic | null;
 };
 
 export type JarvisSystemReport = {
