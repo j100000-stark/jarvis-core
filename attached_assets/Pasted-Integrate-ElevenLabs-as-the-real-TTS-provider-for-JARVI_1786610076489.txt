@@ -1,0 +1,100 @@
+Integrate ElevenLabs as the real TTS provider for JARVIS.
+
+Use the existing voice architecture and do not replace the Brain/LLM system.
+
+Configuration already exists in the environment:
+
+ELEVENLABS_API_KEY
+ELEVENLABS_VOICE_ID
+ELEVENLABS_MODEL=eleven_flash_v2_5
+
+Requirements:
+
+1. Create an ElevenLabsTTSProvider behind a clean TTSProvider interface.
+2. Use the ElevenLabs Text-to-Speech API.
+3. Use ELEVENLABS_VOICE_ID as the selected voice.
+4. Use ELEVENLABS_MODEL, defaulting to eleven_flash_v2_5.
+5. NEVER expose ELEVENLABS_API_KEY to the browser/frontend.
+6. The API key must only be used server-side.
+7. Add streaming support if compatible with the existing architecture so JARVIS can begin speaking before the complete response is synthesized.
+8. Keep the existing browser SpeechSynthesis fallback available if ElevenLabs is unavailable.
+9. Clearly report TTS provider status instead of pretending ElevenLabs is active when configuration/API calls fail.
+
+VOICE PIPELINE:
+
+Microphone
+→ existing STT
+→ Groq LLM
+→ JARVIS tools/agents
+→ response text
+→ ElevenLabs TTS
+→ audio playback
+→ SPEAKING state
+
+NEURAL CORE:
+
+When ElevenLabs audio starts:
+state = SPEAKING
+
+When audio ends:
+state = IDLE
+
+When TTS fails:
+return to IDLE and show a clear error.
+
+Do not use fake audio.
+
+The neural core should react to actual TTS playback rather than a random animation.
+
+VOICE QUALITY:
+
+Use the configured ElevenLabs voice.
+Use natural pauses and sentence chunking where appropriate.
+Do not speak markdown, JSON, tool traces, debug information, or internal execution metadata.
+Only speak the natural assistant response.
+
+MOBILE:
+
+Make sure this works from the existing iPhone web interface.
+
+Keep:
+- cinematic neural core
+- microphone
+- chat
+- system panel
+- Groq LLM
+- memory
+- tools
+- DemoBrain
+- LocalAIProvider
+
+Do not modify or remove those systems.
+
+TESTS:
+
+Add mocked ElevenLabs provider tests for:
+- successful synthesis
+- API failure
+- missing API key
+- missing voice ID
+- malformed response
+- streaming/fallback behavior
+- speaking state transitions
+- secret isolation
+
+Run:
+
+python -m unittest discover -s tests -v
+
+Run both TypeScript checks.
+
+Do not finish until all tests pass.
+
+Finally report:
+- files created/modified
+- TTS provider status
+- model used
+- voice ID configuration status (do not print secrets)
+- tests
+- TypeScript result
+- how to test the voice from iPhone

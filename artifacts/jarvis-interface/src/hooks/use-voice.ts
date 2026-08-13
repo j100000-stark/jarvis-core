@@ -1,29 +1,25 @@
 /**
- * useVoice — browser Web Speech API hook for JARVIS V1.
+ * useVoice — Voice pipeline for JARVIS V1.
  *
- * Pipeline:
- *   MICROPHONE → SpeechRecognition → onTranscript callback
- *   response text → SpeechSynthesis → AUDIO
+ * STT:  Browser Web Speech API (SpeechRecognition / webkitSpeechRecognition)
+ * TTS:  ElevenLabs via /api/tts backend endpoint (API key stays server-side)
+ *       → fallback to browser SpeechSynthesis when backend is unavailable
  *
  * State machine:
- *   idle → listening  (startListening called)
- *   listening → idle  (stopListening called or result received)
+ *   idle → listening  (startListening)
+ *   listening → idle  (stopListening or final transcript received)
  *   idle → speaking   (speak called)
- *   speaking → idle   (utterance ends or cancelSpeaking called)
- *   any → error       (recognition or synthesis error)
+ *   speaking → idle   (audio ended / synthesis complete)
+ *   any → error       (recognition or TTS error)
+ *   unsupported       (browser has no STT/TTS support)
  *
- * If the browser does not support the APIs, isSupported is false and all
- * methods are no-ops.  No fake audio is ever produced.
- *
- * Provider-agnostic: the speak() method can later be replaced by a cloud
- * TTS provider (ElevenLabs, Google Cloud, etc.) without changing callers.
+ * Security: ELEVENLABS_API_KEY never touches the browser.  The /api/tts
+ * endpoint is a pure server-side proxy.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
 
-// ── Web Speech API type declarations ────────────────────────────────────────
-// TypeScript's lib.dom.d.ts includes these but they may not be available in
-// all tsconfig targets.  We declare what we use to keep the hook self-contained.
+// ── Web Speech API type declarations (self-contained, no lib.dom dependency) ──
 
 interface SpeechRecognitionResult {
   readonly isFinal: boolean;
@@ -60,7 +56,7 @@ interface ISpeechRecognition extends EventTarget {
 }
 type SpeechRecognitionCtor = new () => ISpeechRecognition;
 
-// ── Browser API feature detection ──────────────────────────────────────────
+// ── Browser feature detection (computed once at module load) ──────────────────
 
 type WindowWithSpeech = Window & {
   SpeechRecognition?: SpeechRecognitionCtor;
@@ -68,24 +64,52 @@ type WindowWithSpeech = Window & {
 };
 
 function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === "undefined") return null;
   const w = window as WindowWithSpeech;
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
 const hasSynthesis =
-  typeof window !== 'undefined' && 'speechSynthesis' in window;
+  typeof window !== "undefined" && "speechSynthesis" in window;
 
-const isSupportedBrowser = Boolean(getSpeechRecognitionCtor()) && hasSynthesis;
+const isSupportedBrowser =
+  Boolean(getSpeechRecognitionCtor()) && hasSynthesis;
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ── Text cleaning (mirrors jarvis/tts/provider.py) ────────────────────────────
 
-export type VoiceState = 'idle' | 'listening' | 'speaking' | 'error' | 'unsupported';
+export function cleanForSpeech(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]+`/g, "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*{1,3}([^*\n]+)\*{1,3}/g, "$1")
+    .replace(/_{1,3}([^_\n]+)_{1,3}/g, "$1")
+    .replace(/~~([^~\n]+)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/^[-*_]{3,}\s*$/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// ── Public types ──────────────────────────────────────────────────────────────
+
+export type VoiceState =
+  | "idle"
+  | "listening"
+  | "speaking"
+  | "error"
+  | "unsupported";
+
+/** Which TTS path was used for the most recent speak() call. */
+export type TTSProvider = "elevenlabs" | "browser" | "none";
 
 export interface UseVoiceOptions {
   /** Called when STT produces a final transcript. */
   onTranscript: (text: string) => void;
-  /** BCP 47 language tag (default: browser locale). */
+  /** BCP-47 language tag for both STT and browser TTS (default: browser locale). */
   lang?: string;
 }
 
@@ -93,46 +117,69 @@ export interface UseVoice {
   voiceState: VoiceState;
   isListening: boolean;
   isSpeaking: boolean;
-  /** false if the browser has no SpeechRecognition or SpeechSynthesis support. */
+  /** false when the browser lacks SpeechRecognition or SpeechSynthesis. */
   isSupported: boolean;
   error: string | null;
-  /** Interim transcript while listening. */
+  /** Interim transcript while listening (cleared when final transcript fires). */
   transcript: string;
+  /** Which TTS provider handled the last speak() call. */
+  ttsProvider: TTSProvider;
   startListening: () => void;
   stopListening: () => void;
   speak: (text: string) => void;
   cancelSpeaking: () => void;
 }
 
-// ── Hook ───────────────────────────────────────────────────────────────────
+// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
   const [voiceState, setVoiceState] = useState<VoiceState>(
-    isSupportedBrowser ? 'idle' : 'unsupported'
+    isSupportedBrowser ? "idle" : "unsupported",
   );
-  const [transcript, setTranscript] = useState('');
+  const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [ttsProvider, setTtsProvider] = useState<TTSProvider>("none");
 
   const recognitionRef = useRef<ISpeechRecognition | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioBlobUrlRef = useRef<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
 
-  // ── Cleanup on unmount ──────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /** Stop and release any active <audio> element from ElevenLabs playback. */
+  const stopAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current = null;
+    }
+    if (audioBlobUrlRef.current) {
+      URL.revokeObjectURL(audioBlobUrlRef.current);
+      audioBlobUrlRef.current = null;
+    }
+  }, []);
+
+  // ── Cleanup on unmount ─────────────────────────────────────────────────────
 
   useEffect(() => {
     return () => {
       try { recognitionRef.current?.stop(); } catch { /* ignore */ }
+      stopAudio();
       if (hasSynthesis) window.speechSynthesis.cancel();
     };
-  }, []);
+  }, [stopAudio]);
 
-  // ── startListening ──────────────────────────────────────────────────────
+  // ── startListening ─────────────────────────────────────────────────────────
 
   const startListening = useCallback(() => {
     if (!isSupportedBrowser) return;
-    if (voiceState === 'listening') return;
+    if (voiceState === "listening") return;
 
-    // Cancel any active speech before listening to avoid feedback
+    // Cancel any active audio before listening (avoids feedback)
+    stopAudio();
     if (hasSynthesis) window.speechSynthesis.cancel();
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -144,42 +191,38 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
     const rec = new Ctor();
     rec.continuous = false;
     rec.interimResults = true;
-    rec.lang = lang ?? navigator.language ?? 'en-US';
+    rec.lang = lang ?? navigator.language ?? "en-US";
     rec.maxAlternatives = 1;
 
     rec.onstart = () => {
-      setVoiceState('listening');
-      setTranscript('');
+      setVoiceState("listening");
+      setTranscript("");
       setError(null);
     };
 
     rec.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = '';
-      let final = '';
+      let interim = "";
+      let final = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const item = event.results[i];
-        if (item.isFinal) {
-          final += item[0].transcript;
-        } else {
-          interim += item[0].transcript;
-        }
+        if (item.isFinal) final += item[0].transcript;
+        else interim += item[0].transcript;
       }
       setTranscript(final || interim);
       if (final) {
-        setVoiceState('idle');
+        setVoiceState("idle");
         onTranscriptRef.current(final.trim());
       }
     };
 
     rec.onerror = (event: SpeechRecognitionErrorEvent) => {
-      const msg = `Voice error: ${event.error}`;
-      setError(msg);
-      setVoiceState('error');
-      setTranscript('');
+      setError(`Voice error: ${event.error}`);
+      setVoiceState("error");
+      setTranscript("");
     };
 
     rec.onend = () => {
-      setVoiceState((prev) => (prev === 'listening' ? 'idle' : prev));
+      setVoiceState((prev) => (prev === "listening" ? "idle" : prev));
     };
 
     recognitionRef.current = rec;
@@ -187,67 +230,145 @@ export function useVoice({ onTranscript, lang }: UseVoiceOptions): UseVoice {
       rec.start();
     } catch (e) {
       setError(`Could not start microphone: ${e}`);
-      setVoiceState('error');
+      setVoiceState("error");
     }
-  }, [voiceState, lang]);
+  }, [voiceState, lang, stopAudio]);
 
-  // ── stopListening ───────────────────────────────────────────────────────
+  // ── stopListening ──────────────────────────────────────────────────────────
 
   const stopListening = useCallback(() => {
     if (!recognitionRef.current) return;
     try { recognitionRef.current.stop(); } catch { /* ignore */ }
     recognitionRef.current = null;
-    setVoiceState('idle');
+    setVoiceState("idle");
   }, []);
 
-  // ── speak ───────────────────────────────────────────────────────────────
+  // ── speak ──────────────────────────────────────────────────────────────────
 
-  const speak = useCallback((text: string) => {
-    if (!hasSynthesis || !text.trim()) return;
+  const speak = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
 
-    // Stop any ongoing recognition before speaking
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch { /* ignore */ }
-      recognitionRef.current = null;
-    }
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang ?? navigator.language ?? 'en-US';
-    utterance.rate = 1.0;
-    utterance.pitch = 0.95;
-    utterance.volume = 1.0;
-
-    utterance.onstart = () => setVoiceState('speaking');
-    utterance.onend = () => setVoiceState('idle');
-    utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
-      if (e.error !== 'interrupted') {
-        setError(`TTS error: ${e.error}`);
-        setVoiceState('error');
-      } else {
-        setVoiceState('idle');
+      // Stop any ongoing recognition or audio first
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch { /* ignore */ }
+        recognitionRef.current = null;
       }
-    };
+      stopAudio();
+      if (hasSynthesis) window.speechSynthesis.cancel();
 
-    setVoiceState('speaking');
-    window.speechSynthesis.speak(utterance);
-  }, [lang]);
+      setVoiceState("speaking");
+      setError(null);
 
-  // ── cancelSpeaking ──────────────────────────────────────────────────────
+      const clean = cleanForSpeech(text);
+      if (!clean) {
+        setVoiceState("idle");
+        return;
+      }
+
+      // ── 1. Try ElevenLabs via backend ─────────────────────────────────────
+      fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: clean }),
+      })
+        .then(async (resp) => {
+          if (!resp.ok) {
+            // Parse error info without exposing the raw response to users
+            let msg = `HTTP ${resp.status}`;
+            try {
+              const data = (await resp.json()) as { error?: string };
+              if (data.error) msg = data.error;
+            } catch { /* ignore */ }
+            throw new Error(msg);
+          }
+          return resp.blob();
+        })
+        .then((blob) => {
+          const url = URL.createObjectURL(blob);
+          audioBlobUrlRef.current = url;
+
+          const audio = new Audio(url);
+          audioRef.current = audio;
+
+          audio.onended = () => {
+            stopAudio();
+            setVoiceState("idle");
+          };
+
+          audio.onerror = () => {
+            stopAudio();
+            setError("ElevenLabs audio playback failed.");
+            setVoiceState("error");
+          };
+
+          setTtsProvider("elevenlabs");
+          audio.play().catch((playErr) => {
+            // play() can be blocked by browser autoplay policy
+            stopAudio();
+            console.warn("[JARVIS voice] Audio play() blocked:", playErr);
+            setError("Audio playback was blocked by the browser. Tap to speak again.");
+            setVoiceState("error");
+          });
+        })
+        .catch((err: unknown) => {
+          // ── 2. Fall back to browser SpeechSynthesis ───────────────────────
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[JARVIS voice] ElevenLabs TTS unavailable (${msg}), falling back to browser SpeechSynthesis.`,
+          );
+
+          if (!hasSynthesis) {
+            setError(`TTS unavailable: ${msg}`);
+            setVoiceState("error");
+            return;
+          }
+
+          const utterance = new SpeechSynthesisUtterance(clean);
+          utterance.lang = lang ?? navigator.language ?? "en-US";
+          utterance.rate = 1.0;
+          utterance.pitch = 0.95;
+          utterance.volume = 1.0;
+
+          utterance.onstart = () => {
+            setTtsProvider("browser");
+            setVoiceState("speaking");
+          };
+          utterance.onend = () => {
+            setVoiceState("idle");
+          };
+          utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
+            if (e.error !== "interrupted") {
+              setError(`Browser TTS error: ${e.error}`);
+              setVoiceState("error");
+            } else {
+              setVoiceState("idle");
+            }
+          };
+
+          setTtsProvider("browser");
+          window.speechSynthesis.speak(utterance);
+        });
+    },
+    [lang, stopAudio],
+  );
+
+  // ── cancelSpeaking ─────────────────────────────────────────────────────────
 
   const cancelSpeaking = useCallback(() => {
-    if (!hasSynthesis) return;
-    window.speechSynthesis.cancel();
-    setVoiceState('idle');
-  }, []);
+    stopAudio();
+    if (hasSynthesis) window.speechSynthesis.cancel();
+    setVoiceState("idle");
+  }, [stopAudio]);
 
   return {
     voiceState,
-    isListening: voiceState === 'listening',
-    isSpeaking: voiceState === 'speaking',
+    isListening: voiceState === "listening",
+    isSpeaking: voiceState === "speaking",
     isSupported: isSupportedBrowser,
     error,
     transcript,
+    ttsProvider,
     startListening,
     stopListening,
     speak,

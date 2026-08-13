@@ -3,3 +3,4 @@
 - [Memory tiers](memory-tiers.md) — MemoryRecord has `tier` field (default "long_term"); backward-compatible with old JSON; tiers: long_term/episodic/system.
 - [Voice hook](voice-hook.md) — useVoice uses self-declared Web Speech API types (not lib.dom); isSupportedBrowser guards all calls; speak() auto-cancels recognition first.
 - [CoreState](core-state.md) — NeuralCore + Waveform + STATE_META all require `executing` entry; adding a new CoreState requires updating all three.
+- [ElevenLabs TTS](tts-elevenlabs.md) — server-side proxy at /api/tts; API key stays in Node process.env; frontend falls back to SpeechSynthesis on error.
